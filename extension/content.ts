@@ -399,6 +399,7 @@ async function startPlayback(
   let currentWordKey = "";
   let alignmentNeedsMapping = false;
   let didReportHighlightMapping = false;
+  let didReportHighlightMismatch = false;
   const sources = new Set<AudioBufferSourceNode>();
   const scheduledRanges: Array<{ start: number; end: number; firstFrame: number }> = [];
   const audioTimeline: Array<{ buffer: AudioBuffer; firstFrame: number }> = [];
@@ -650,6 +651,15 @@ async function startPlayback(
       if (matchAt < 0 || !matchedText || !Number.isFinite(segment.start) || !Number.isFinite(segment.end)) {
         continue;
       }
+      if (matchAt - cursor > 80) {
+        if (!didReportHighlightMismatch) {
+          recordClientEvent("highlight_text_mismatch", segment.start * 1000, {
+            skipped_page_chars: matchAt - cursor,
+          });
+          didReportHighlightMismatch = true;
+        }
+        break;
+      }
 
       const first = getTextPoint(pageTextIndex, matchAt);
       const last = getTextPoint(pageTextIndex, matchAt + matchedText.length - 1);
@@ -660,6 +670,9 @@ async function startPlayback(
       const range = document.createRange();
       range.setStart(first.node, first.offset);
       range.setEnd(last.node, last.offset + 1);
+      if (selectionRange && range.compareBoundaryPoints(Range.END_TO_END, selectionRange) > 0) {
+        break;
+      }
       words.push({ key: segment.key, start: segment.start, end: segment.end, range });
       cursor = matchAt + matchedText.length;
     }
