@@ -1,0 +1,11 @@
+[project]
+name = "readflow-bridge"
+version = "0.1.0"
+description = "Local streaming bridge between the Readflow extension and Fish Audio."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
+    "python-dotenv>=1,<2",
+    "uvicorn[standard]>=0.34,<1",
+]

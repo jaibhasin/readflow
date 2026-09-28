@@ -14,7 +14,7 @@ The page follows the spoken paragraph and gives the current word a subtle highli
 4. The player shows play/pause, 15-second back and forward controls, progress, and a close button.
 5. Playback scrolls the active paragraph into view when needed and highlights the current word without changing the article's markup or layout.
 6. Closing the player stops playback and removes Readflow highlights.
-7. If the local TTS service is unavailable or Fish Audio rejects a request, the player shows a short, actionable error.
+7. If Fish Audio rejects a request, the player shows a short, actionable error.
 
 The article action always starts at the top of the main article.
 Selection playback reads only the selected text.
@@ -30,7 +30,7 @@ The floating player stays within the current tab; navigation starts a new sessio
 | Article detection | Mozilla Readability on a cloned document, plus live DOM paragraph matching | Good main-content extraction while retaining links to visible text for highlighting. |
 | Highlight | CSS Highlight API and DOM `Range` | Highlights words without inserting spans into an article. |
 | Audio | HTMLAudioElement with MediaSource | Streams compressed audio into a normal seekable player. |
-| Local TTS bridge | Python 3.12+ managed with uv, FastAPI, Uvicorn, HTTPX, python-dotenv | Uses uv to lock bridge dependencies; reads `API_KEY` from `.env` and relays Fish Audio's stream without bundling the key. |
+| Local TTS bridge | Python 3.12+ managed with uv, FastAPI, Uvicorn, HTTPX, python-dotenv | Uses uv to lock bridge dependencies; reads `FISH_API_KEY` from `.env` and relays Fish Audio's stream without bundling the key. |
 | TTS | Fish Audio `s2.1-pro-free` timestamp stream | Supplies audio and alignment data together. |
 
 No account system or database is needed for the local MVP.
@@ -41,7 +41,7 @@ No account system or database is needed for the local MVP.
 Current page text or selection
   -> content script extracts readable text and live DOM ranges
   -> extension service worker requests local FastAPI bridge
-  -> bridge calls Fish Audio with API_KEY from .env
+  -> bridge calls Fish Audio with FISH_API_KEY from .env
   -> Fish Audio SSE audio and alignment events
   -> bridge and service worker relay events to the content script
   -> player buffers audio, follows paragraph, highlights spoken word
@@ -66,7 +66,7 @@ Long articles may require bounded text requests and a rolling buffer so that one
 
 ## Local key handling
 
-The existing `.env` contains `API_KEY` and remains untracked.
+The existing `.env` contains `FISH_API_KEY` and remains untracked.
 The FastAPI bridge loads it with `python-dotenv` at startup and makes Fish Audio requests on behalf of the extension.
 The key never appears in the extension package, browser storage, page DOM, or logs.
 The bridge binds to loopback only and accepts requests from this local extension workflow.
