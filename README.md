@@ -72,7 +72,7 @@ That is usually around 15 to 20 English words per fragment, but the word count v
 
 ## View listen diagnostics
 
-Click the Readflow toolbar icon to see the last 10 listens, including the source, text and audio counts, and whether the request finished or stopped.
+Click **Debug** on an article page or the Readflow toolbar icon to see the last 10 listens, including the source, text and audio counts, and whether the request finished or stopped.
 The summary is saved only in this browser profile.
 Turn on **Record detailed trace for next listen** before listening to save the exact text, each Fish text fragment, provider timing, and returned word timestamps for one listen.
 Open a listen and expand its events to inspect the saved text and timestamp snapshots, or export that listen as JSON.
