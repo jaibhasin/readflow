@@ -109,9 +109,21 @@ function createPageTextIndex(): PageTextIndex {
   });
   let normalized = "";
   const spans: TextSpan[] = [];
+  const blockStarts = [0];
+  let currentBlock: Element | null = null;
 
   while (walker.nextNode()) {
     const node = walker.currentNode as Text;
+    const block = node.parentElement?.closest("p, h1, h2, h3, h4, h5, h6, li, blockquote, figcaption, td, th, dt, dd, pre, div, section, article, main") ?? null;
+    if (block !== currentBlock) {
+      if (normalized) {
+        if (!normalized.endsWith(" ")) {
+          normalized += " ";
+        }
+        blockStarts.push(normalized.length);
+      }
+      currentBlock = block;
+    }
     let spanStart = -1;
     const offsets: number[] = [];
     for (let offset = 0; offset < node.data.length; offset += 1) {
@@ -133,7 +145,7 @@ function createPageTextIndex(): PageTextIndex {
     }
   }
 
-  return { text: normalized, spans, sentences: sentenceSpans(normalized) };
+  return { text: normalized, spans, sentences: sentenceSpans(normalized, blockStarts) };
 }
 
 function findSourceStart(index: PageTextIndex, text: string, range?: Range): number {

@@ -10,6 +10,14 @@ test("groups words by sentence without including leading spaces", () => {
   ]);
 });
 
+test("keeps headings and paragraphs separate when the DOM adds no whitespace", () => {
+  const blocks = ["Title", "First sentence. Second sentence.", "Next heading", "Body sentence."];
+  const text = blocks.join("");
+  const starts = blocks.map((_, index) => blocks.slice(0, index).join("").length);
+  const sentences = sentenceSpans(text, starts).map(({ start, end }) => text.slice(start, end));
+  assert.deepEqual(sentences, ["Title", "First sentence.", "Second sentence.", "Next heading", "Body sentence."]);
+});
+
 test("matches spoken nth to rendered superscript text", () => {
   const page = normalizeForSearch("for the nᵗʰ time on how");
   const offsets = locateWordOffsets(page, ["for", "the", "nth", "time"], 0);
