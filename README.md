@@ -1,9 +1,9 @@
 # Readflow
 
-Readflow is a Chrome extension that will read articles and selected text aloud while following the spoken words.
+Readflow is a Chrome extension that reads articles and selected text aloud.
 
-The extension identifies likely article text and selected text, then shows a nearby **Listen** action.
-For now, clicking an action confirms the captured word count; audio playback comes in a later milestone.
+The extension identifies likely article text and selected text, then shows a **Listen** action.
+It streams Fish Audio speech through a local Python bridge and starts playback after buffering 100 ms of audio.
 
 ## Requirements
 
@@ -61,6 +61,11 @@ npm run build
 ```
 
 Open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select this project's `dist/` folder.
+Keep the local bridge running while listening.
+
+On an article page, choose **Listen to article** to read the article.
+Select text and choose **Listen** to read only that selection.
+Use **Pause** or **Stop** in the small player while audio is playing.
 
 ## Check the bridge stream
 
@@ -78,4 +83,5 @@ Fish Audio events should arrive as the service generates audio and timestamp dat
 
 ```sh
 npm run check
+npm run build
 ```

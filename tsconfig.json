@@ -6,7 +6,7 @@
     "strict": true,
     "noEmit": true,
     "lib": ["ES2022", "DOM"],
-    "types": []
+    "types": ["chrome"]
   },
   "include": ["extension/**/*.ts"]
 }

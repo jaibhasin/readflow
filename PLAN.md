@@ -29,8 +29,8 @@ The floating player stays within the current tab; navigation starts a new sessio
 | Build | Vite for extension assets | Simple TypeScript bundling and local iteration. |
 | Article detection | Mozilla Readability on a cloned document, plus live DOM paragraph matching | Good main-content extraction while retaining links to visible text for highlighting. |
 | Highlight | CSS Highlight API and DOM `Range` | Highlights words without inserting spans into an article. |
-| Audio | HTMLAudioElement with MediaSource | Streams compressed audio into a normal seekable player. |
-| Local TTS bridge | Python 3.12+ managed with uv, FastAPI, Uvicorn, HTTPX, python-dotenv | Uses uv to lock bridge dependencies; reads `FISH_API_KEY` from `.env` and relays Fish Audio's stream without bundling the key. |
+| Audio | Web Audio API with 44.1 kHz PCM | Plays Fish's raw PCM chunks while keeping playback time tied to submitted audio frames. |
+| Local TTS bridge | Python 3.12+ managed with uv, FastAPI, Uvicorn, websockets, msgpack, python-dotenv | Uses uv to lock bridge dependencies; reads `FISH_API_KEY` from `.env` and relays Fish Audio's stream without bundling the key. |
 | TTS | Fish Audio `s2.1-pro-free` timestamp stream | Supplies audio and alignment data together. |
 
 No account system or database is needed for the local MVP.
@@ -40,19 +40,25 @@ No account system or database is needed for the local MVP.
 ```text
 Current page text or selection
   -> content script extracts readable text and live DOM ranges
-  -> extension service worker requests local FastAPI bridge
-  -> bridge calls Fish Audio with FISH_API_KEY from .env
-  -> Fish Audio SSE audio and alignment events
-  -> bridge and service worker relay events to the content script
-  -> player buffers audio, follows paragraph, highlights spoken word
+  -> content script asks the extension service worker to listen
+  -> service worker sends text to the local FastAPI bridge
+  -> bridge sends text fragments to Fish Audio over a timestamped WebSocket
+  -> Fish Audio returns PCM audio and alignment frames over the same WebSocket
+  -> bridge relays events to the service worker as a local SSE stream
+  -> service worker forwards audio chunks to the content script
+  -> player buffers 100 ms of PCM, then schedules chunks consecutively with Web Audio
 ```
 
-The Fish endpoint is `POST /v1/tts/stream/with-timestamp` with the `model: s2.1-pro-free` header.
-Its response contains base64 audio chunks and cumulative alignment snapshots.
-The FastAPI bridge uses an HTTPX async streaming request and returns the Fish Audio events through `StreamingResponse` as `text/event-stream`.
-When playback stops or the tab navigates, the bridge closes the upstream Fish Audio request.
-The client appends every audio chunk in arrival order and replaces the latest alignment snapshot for each `chunk_seq`.
-It adds `chunk_audio_offset_sec` to each word's local start and end times before comparing them with the audio player's current time.
+The bridge accepts requests at `POST /v1/tts/stream/with-timestamp` and connects to Fish Audio's timestamped live WebSocket with the `model: s2.1-pro-free` header.
+It sends text fragments as MessagePack frames while receiving audio and alignment frames from Fish Audio.
+The bridge converts audio bytes to base64 and relays each event through a local SSE response.
+The service worker forwards events to the content script over a Chrome extension port.
+The player carries incomplete 16-bit PCM samples between events and buffers 100 ms before playback starts.
+It schedules each audio buffer after the previous one so network event boundaries do not create gaps.
+Playback progress comes from the Web Audio output timestamp mapped to scheduled PCM frames, not from network arrival time.
+When playback stops or the tab navigates, closing the local stream closes the Fish Audio WebSocket.
+Alignment snapshots are cumulative for each `chunk_seq`; a newer snapshot replaces the previous one for that chunk.
+Adding `chunk_audio_offset_sec` to each word's local start and end times gives its position on the full audio timeline.
 
 For a full article, Readability identifies the reading content from a cloned document.
 The content script matches its normalized paragraphs to the live page, records text-node ranges, and excludes unmatched page chrome.
