@@ -1,7 +1,8 @@
 import { isProbablyReaderable, Readability } from "@mozilla/readability";
-import { bufferFramesForSpeed, nextPlaybackRate, playbackDuration, playedFrames } from "./playback-speed";
+import { bufferFramesForSpeed, isAudioAudible, nextPlaybackRate, playbackDuration, playedFrames } from "./playback-speed";
 import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenText } from "./spoken-text";
+import { shortTapeTitle } from "./tape-label";
 import { foldCharacter, locateWordOffsets, normalizeForSearch, sentenceSpans } from "./text-map";
 
 let stopCurrentPlayback: (() => void) | null = null;
@@ -39,6 +40,8 @@ type PageSentenceHighlighter = {
   set(range: Range | null): void;
   clear(): void;
 };
+
+type TransportState = "idle" | "connecting" | "buffering" | "playing" | "paused" | "finished" | "stopped" | "error";
 
 if (articleText && !document.getElementById("readflow-controls")) {
   const controls = createControls();
@@ -232,6 +235,7 @@ function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
 
 function createControls(): {
   host: HTMLDivElement;
+  dock: HTMLDivElement;
   articleButton: HTMLButtonElement;
   debugButton: HTMLButtonElement;
   speedButton: HTMLButtonElement;
@@ -242,6 +246,7 @@ function createControls(): {
   forwardButton: HTMLButtonElement;
   stopButton: HTMLButtonElement;
   status: HTMLDivElement;
+  tapeTitle: HTMLElement;
 } {
   const host = document.createElement("div");
   host.id = "readflow-controls";
@@ -341,6 +346,10 @@ function createControls(): {
         width: 7px;
       }
 
+      #dock[data-transport="playing"] #brand::before {
+        animation: power-glow 1.8s ease-in-out infinite;
+      }
+
       #debug-button {
         background: transparent;
         border: 0;
@@ -397,6 +406,14 @@ function createControls(): {
         top: 28px;
       }
 
+      #cassette-window::after {
+        background: linear-gradient(110deg, transparent 18%, rgb(255 255 255 / 7%) 48%, transparent 64%);
+        content: "";
+        inset: 0;
+        pointer-events: none;
+        position: absolute;
+      }
+
       .reel {
         background: #222a2a;
         border: 5px solid #89928d;
@@ -409,11 +426,17 @@ function createControls(): {
       }
 
       .reel::before {
+        animation: reel-turn 4s linear infinite;
+        animation-play-state: paused;
         background: repeating-conic-gradient(#bec8bc 0deg 14deg, #36423f 14deg 60deg);
         border-radius: 50%;
         content: "";
         inset: 6px;
         position: absolute;
+      }
+
+      #dock[data-transport="playing"] .reel::before {
+        animation-play-state: running;
       }
 
       .reel::after {
@@ -430,23 +453,42 @@ function createControls(): {
       }
 
       #tape-label {
-        color: #c1c9bb;
-        font: 700 9px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-        letter-spacing: 0.12em;
+        color: #dfe9da;
+        display: flex;
+        flex-direction: column;
+        font: 700 9px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+        gap: 2px;
+        max-width: 132px;
         position: relative;
         text-align: center;
         text-shadow: 0 1px #101515;
       }
 
-      #tape-label span {
-        color: #8e9d90;
+      #tape-side {
+        color: #a5b17d;
+        font-size: 7px;
+        letter-spacing: 0.22em;
+      }
+
+      #tape-title,
+      #tape-site {
         display: block;
-        font-size: 8px;
-        letter-spacing: 0.03em;
-        max-width: 130px;
+        max-width: 132px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      #tape-title {
+        color: #e9eee5;
+        font-size: 10px;
+        letter-spacing: 0.01em;
+      }
+
+      #tape-site {
+        color: #a0aaa3;
+        font-size: 8px;
+        letter-spacing: 0.03em;
       }
 
       #selection-button {
@@ -481,8 +523,22 @@ function createControls(): {
         min-height: 17px;
         overflow: hidden;
         padding: 10px 11px;
+        position: relative;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      #status::after {
+        background: repeating-linear-gradient(180deg, transparent 0 3px, rgb(33 49 33 / 9%) 3px 4px);
+        content: "";
+        inset: 0;
+        pointer-events: none;
+        position: absolute;
+      }
+
+      #dock[data-transport="error"] #status {
+        background: #dfb7ad;
+        color: #4c2722;
       }
 
       #player-controls {
@@ -532,6 +588,14 @@ function createControls(): {
         background: linear-gradient(180deg, #eaf5bf, #c3d690);
       }
 
+      @keyframes reel-turn {
+        to { transform: rotate(360deg); }
+      }
+
+      @keyframes power-glow {
+        50% { box-shadow: 0 0 15px rgb(214 233 134 / 80%); }
+      }
+
       @media (max-width: 540px) {
         #dock {
           right: 50%;
@@ -541,6 +605,8 @@ function createControls(): {
 
       @media (prefers-reduced-motion: reduce) {
         button { transition: none; }
+        .reel::before,
+        #dock[data-transport="playing"] #brand::before { animation: none; }
       }
 
       [hidden] {
@@ -549,7 +615,7 @@ function createControls(): {
     </style>
     <div class="readflow-layer">
       <button id="selection-button" type="button" hidden>Listen to selection</button>
-      <div id="dock" role="group" aria-label="Readflow player">
+      <div id="dock" role="group" aria-label="Readflow player" data-transport="idle">
         <div id="dock-header">
           <span id="brand">READFLOW</span>
           <div id="header-actions">
@@ -559,7 +625,11 @@ function createControls(): {
         </div>
         <div id="cassette-window" aria-hidden="true">
           <span class="reel"></span>
-          <span id="tape-label">SIDE A<span id="tape-site"></span></span>
+          <span id="tape-label">
+            <span id="tape-side">SIDE A · RF-01</span>
+            <span id="tape-title"></span>
+            <span id="tape-site"></span>
+          </span>
           <span class="reel"></span>
         </div>
         <div id="status" role="status" aria-live="polite">Ready to listen</div>
@@ -575,9 +645,13 @@ function createControls(): {
   `;
 
   shadow.querySelector<HTMLElement>("#tape-site")!.textContent = window.location.hostname.replace(/^www\./, "") || "LOCAL PAGE";
+  const tapeTitle = shadow.querySelector<HTMLElement>("#tape-title")!;
+  tapeTitle.textContent = shortTapeTitle(document.title);
+  tapeTitle.title = tapeTitle.textContent;
 
   return {
     host,
+    dock: shadow.querySelector<HTMLDivElement>("#dock")!,
     articleButton: shadow.querySelector<HTMLButtonElement>("#article-button")!,
     debugButton: shadow.querySelector<HTMLButtonElement>("#debug-button")!,
     speedButton: shadow.querySelector<HTMLButtonElement>("#speed-button")!,
@@ -588,6 +662,7 @@ function createControls(): {
     forwardButton: shadow.querySelector<HTMLButtonElement>("#forward-button")!,
     stopButton: shadow.querySelector<HTMLButtonElement>("#stop-button")!,
     status: shadow.querySelector<HTMLDivElement>("#status")!,
+    tapeTitle,
   };
 }
 
@@ -614,6 +689,12 @@ function positionSelectionButton(button: HTMLButtonElement): void {
   button.hidden = false;
 }
 
+function setTransportState(controls: ReturnType<typeof createControls>, state: TransportState): void {
+  if (controls.dock.dataset.transport !== state) {
+    controls.dock.dataset.transport = state;
+  }
+}
+
 async function startPlayback(
   controls: ReturnType<typeof createControls>,
   text: string,
@@ -622,6 +703,9 @@ async function startPlayback(
 ): Promise<void> {
   stopCurrentPlayback?.();
   const spokenText = prepareSpokenText(text);
+  controls.tapeTitle.textContent = source === "Selected text" ? "Selected passage" : shortTapeTitle(document.title);
+  controls.tapeTitle.title = controls.tapeTitle.textContent;
+  setTransportState(controls, "connecting");
   controls.status.textContent = `Connecting for ${source.toLowerCase()} audio…`;
   controls.status.hidden = false;
 
@@ -629,6 +713,7 @@ async function startPlayback(
   try {
     context = new AudioContext({ sampleRate: SAMPLE_RATE });
   } catch {
+    setTransportState(controls, "error");
     controls.status.textContent = "This browser could not create a 44.1 kHz audio stream.";
     controls.status.hidden = false;
     return;
@@ -711,14 +796,22 @@ async function startPlayback(
 
     if (context.state === "running") {
       void context.suspend().then(() => {
+        if (stopped) {
+          return;
+        }
         controls.pauseButton.textContent = "Play";
+        setTransportState(controls, "paused");
         recordClientEvent("paused", getAudibleFrame() / SAMPLE_RATE * 1000);
-      });
+      }).catch(() => undefined);
     } else {
       void context.resume().then(() => {
+        if (stopped) {
+          return;
+        }
         controls.pauseButton.textContent = "Pause";
+        setTransportState(controls, "buffering");
         recordClientEvent("resumed", getAudibleFrame() / SAMPLE_RATE * 1000);
-      });
+      }).catch(() => undefined);
     }
   };
   controls.rewindButton.onclick = () => seekBy(-15);
@@ -726,6 +819,7 @@ async function startPlayback(
   controls.stopButton.onclick = () => {
     cleanup();
     controls.status.textContent = "Stopped";
+    setTransportState(controls, "stopped");
     controls.playerControls.hidden = true;
     if (stopCurrentPlayback === cleanup) {
       stopCurrentPlayback = null;
@@ -736,6 +830,7 @@ async function startPlayback(
     recordClientEvent("playback_error", getAudibleFrame() / SAMPLE_RATE * 1000, message);
     cleanup(false);
     controls.status.textContent = message;
+    setTransportState(controls, "error");
     controls.playerControls.hidden = true;
     if (stopCurrentPlayback === cleanup) {
       stopCurrentPlayback = null;
@@ -749,6 +844,7 @@ async function startPlayback(
       currentSentenceKey = "";
       recordClientEvent("playback_finished", getAudibleFrame() / SAMPLE_RATE * 1000);
       controls.status.textContent = "Finished";
+      setTransportState(controls, "finished");
       controls.pauseButton.textContent = "Play";
       cancelAnimationFrame(animationFrame);
     }
@@ -885,8 +981,10 @@ async function startPlayback(
 
     if (waiting) {
       controls.status.textContent = `Buffering to ${formatTime(targetFrame / SAMPLE_RATE)}…`;
+      setTransportState(controls, "buffering");
     } else {
       scheduleFromFrame(targetFrame);
+      setTransportState(controls, context.state === "suspended" ? "paused" : "buffering");
     }
 
     controls.rewindButton.disabled = targetFrame === 0;
@@ -1021,7 +1119,8 @@ async function startPlayback(
 
     const frame = getAudibleFrame();
     const outputContextTime = context.getOutputTimestamp().contextTime ?? context.currentTime;
-    const hasAudibleAudio = scheduledRanges.some((range) => outputContextTime >= range.start);
+    const hasAudibleAudio = isAudioAudible(scheduledRanges, outputContextTime);
+    setTransportState(controls, context.state === "suspended" ? "paused" : hasAudibleAudio ? "playing" : "buffering");
     if (!playbackStarted && hasAudibleAudio && context.state === "running") {
       playbackStarted = true;
       recordClientEvent("playback_started", frame / SAMPLE_RATE * 1000);
@@ -1030,7 +1129,7 @@ async function startPlayback(
     controls.rewindButton.disabled = frame <= 0;
     controls.forwardButton.disabled = streamFinished && frame >= receivedFrames;
     const seconds = Math.max(0, frame / SAMPLE_RATE);
-    const state = context.state === "suspended" ? "Paused" : "Playing";
+    const state = context.state === "suspended" ? "Paused" : hasAudibleAudio ? "Playing" : "Buffering";
     controls.status.textContent = `${state} · ${formatTime(seconds)}`;
     animationFrame = requestAnimationFrame(updatePlaybackTime);
   };
@@ -1107,6 +1206,7 @@ async function startPlayback(
       window.setTimeout(prepareTextIndex, 0);
     }
     controls.status.textContent = "Waiting for 100 ms of audio…";
+    setTransportState(controls, "buffering");
     animationFrame = requestAnimationFrame(updatePlaybackTime);
   } catch {
     reportError("Audio playback could not start. Try again.");

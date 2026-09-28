@@ -16,3 +16,7 @@ export function playbackDuration(frameCount: number, sampleRate: number, playbac
 export function bufferFramesForSpeed(baseFrames: number, playbackRate: number): number {
   return Math.ceil(baseFrames * playbackRate);
 }
+
+export function isAudioAudible(ranges: Array<{ start: number; end: number }>, contextTime: number): boolean {
+  return ranges.some((range) => range.start <= contextTime && contextTime < range.end);
+}
