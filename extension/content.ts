@@ -1,13 +1,13 @@
 import { isProbablyReaderable, Readability } from "@mozilla/readability";
 import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenText } from "./spoken-text";
-import { foldCharacter, locateWordOffsets, normalizeForSearch } from "./text-map";
+import { foldCharacter, locateWordOffsets, normalizeForSearch, sentenceSpans } from "./text-map";
 
 let stopCurrentPlayback: (() => void) | null = null;
 const SAMPLE_RATE = 44_100;
 const START_BUFFER_FRAMES = SAMPLE_RATE / 10;
 const articleText = getArticleText();
-let pageWordHighlighter: PageWordHighlighter | null = null;
+let pageSentenceHighlighter: PageSentenceHighlighter | null = null;
 
 type WordTiming = {
   text: string;
@@ -29,9 +29,10 @@ type TextSpan = {
 type PageTextIndex = {
   text: string;
   spans: TextSpan[];
+  sentences: Array<{ start: number; end: number }>;
 };
 
-type PageWordHighlighter = {
+type PageSentenceHighlighter = {
   set(range: Range | null): void;
   clear(): void;
 };
@@ -132,7 +133,7 @@ function createPageTextIndex(): PageTextIndex {
     }
   }
 
-  return { text: normalized, spans };
+  return { text: normalized, spans, sentences: sentenceSpans(normalized) };
 }
 
 function findSourceStart(index: PageTextIndex, text: string, range?: Range): number {
@@ -174,9 +175,9 @@ function getTextPoint(index: PageTextIndex, position: number): { node: Text; off
   return null;
 }
 
-function createPageWordHighlighter(): PageWordHighlighter | null {
-  if (pageWordHighlighter) {
-    return pageWordHighlighter;
+function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
+  if (pageSentenceHighlighter) {
+    return pageSentenceHighlighter;
   }
 
   type HighlightValue = Set<Range> & { priority: number };
@@ -189,10 +190,10 @@ function createPageWordHighlighter(): PageWordHighlighter | null {
     return null;
   }
 
-  const name = "readflow-current-word";
+  const name = "readflow-current-sentence";
   const highlight = new HighlightConstructor();
   registry.set(name, highlight);
-  pageWordHighlighter = {
+  pageSentenceHighlighter = {
     set(range) {
       highlight.clear();
       if (range) {
@@ -203,7 +204,7 @@ function createPageWordHighlighter(): PageWordHighlighter | null {
       highlight.clear();
     },
   };
-  return pageWordHighlighter;
+  return pageSentenceHighlighter;
 }
 
 function createControls(): {
@@ -383,10 +384,10 @@ async function startPlayback(
   const port = chrome.runtime.connect({ name: "readflow-tts" });
   let pageTextIndex: PageTextIndex | null = null;
   let sourceStart = -1;
-  const highlighter = createPageWordHighlighter();
+  const highlighter = createPageSentenceHighlighter();
   const alignmentsByChunk = new Map<number, ChunkAlignment>();
-  let locatedWords: Array<{ key: string; start: number; end: number; range: Range }> = [];
-  let currentWordKey = "";
+  let locatedWords: Array<{ sentenceKey: string; start: number; range: Range }> = [];
+  let currentSentenceKey = "";
   let alignmentNeedsMapping = false;
   let didReportHighlightMapping = false;
   let didReportHighlightMismatch = false;
@@ -490,7 +491,7 @@ async function startPlayback(
     if (streamFinished && sources.size === 0 && pendingFrameCount === 0 && !stopped) {
       playbackComplete = true;
       highlighter?.clear();
-      currentWordKey = "";
+      currentSentenceKey = "";
       recordClientEvent("playback_finished", getAudibleFrame() / SAMPLE_RATE * 1000);
       controls.status.textContent = "Finished";
       controls.pauseButton.textContent = "Play";
@@ -621,7 +622,7 @@ async function startPlayback(
     nextStart = 0;
     playbackComplete = false;
     highlighter?.clear();
-    currentWordKey = "";
+    currentSentenceKey = "";
     controls.pauseButton.textContent = context.state === "running" ? "Pause" : "Play";
 
     if (waiting) {
@@ -648,9 +649,8 @@ async function startPlayback(
       return;
     }
 
-    const segments = Array.from(alignmentsByChunk.entries()).flatMap(([chunkSequence, snapshot]) =>
-      snapshot.segments.map((segment, index) => ({
-        key: `${chunkSequence}:${index}`,
+    const segments = Array.from(alignmentsByChunk.values()).flatMap((snapshot) =>
+      snapshot.segments.map((segment) => ({
         text: segment.text,
         start: snapshot.offset + segment.start,
         end: snapshot.offset + segment.end,
@@ -658,6 +658,7 @@ async function startPlayback(
     ).sort((left, right) => left.start - right.start);
     const offsets = locateWordOffsets(pageTextIndex.text, segments.map((segment) => segment.text), sourceStart);
     const words: typeof locatedWords = [];
+    const sentenceRanges = new Map<string, Range>();
 
     for (const [index, segment] of segments.entries()) {
       const matchAt = offsets[index];
@@ -670,19 +671,39 @@ async function startPlayback(
         continue;
       }
 
-      const first = getTextPoint(pageTextIndex, matchAt);
-      const last = getTextPoint(pageTextIndex, matchAt + matchedText.length - 1);
+      const sentence = pageTextIndex.sentences.find((span) => span.start <= matchAt && matchAt < span.end);
+      if (!sentence) {
+        continue;
+      }
+      const first = getTextPoint(pageTextIndex, sentence.start);
+      const last = getTextPoint(pageTextIndex, sentence.end - 1);
       if (!first || !last) {
         continue;
       }
 
-      const range = document.createRange();
-      range.setStart(first.node, first.offset);
-      range.setEnd(last.node, last.offset + 1);
-      if (selectionRange && range.compareBoundaryPoints(Range.END_TO_END, selectionRange) > 0) {
-        break;
+      const sentenceKey = `${sentence.start}:${sentence.end}`;
+      let range = sentenceRanges.get(sentenceKey);
+      if (!range) {
+        range = document.createRange();
+        range.setStart(first.node, first.offset);
+        range.setEnd(last.node, last.offset + 1);
+        sentenceRanges.set(sentenceKey, range);
       }
-      words.push({ key: segment.key, start: segment.start, end: segment.end, range });
+      if (selectionRange) {
+        if (range.compareBoundaryPoints(Range.END_TO_START, selectionRange) <= 0) {
+          continue;
+        }
+        if (range.compareBoundaryPoints(Range.START_TO_END, selectionRange) >= 0) {
+          break;
+        }
+        if (range.compareBoundaryPoints(Range.START_TO_START, selectionRange) < 0) {
+          range.setStart(selectionRange.startContainer, selectionRange.startOffset);
+        }
+        if (range.compareBoundaryPoints(Range.END_TO_END, selectionRange) > 0) {
+          range.setEnd(selectionRange.endContainer, selectionRange.endOffset);
+        }
+      }
+      words.push({ sentenceKey, start: segment.start, range });
     }
     locatedWords = words;
     if (!didReportHighlightMapping) {
@@ -694,22 +715,26 @@ async function startPlayback(
     }
   };
 
-  const updateWordHighlight = (playbackSeconds: number): void => {
-    const word = locatedWords.find((candidate) =>
-      candidate.start <= playbackSeconds && playbackSeconds < candidate.end,
-    );
+  const updateSentenceHighlight = (playbackSeconds: number): void => {
+    let word: (typeof locatedWords)[number] | undefined;
+    for (const candidate of locatedWords) {
+      if (candidate.start > playbackSeconds) {
+        break;
+      }
+      word = candidate;
+    }
 
     if (!word || !highlighter) {
       highlighter?.clear();
-      currentWordKey = "";
+      currentSentenceKey = "";
       return;
     }
-    if (word.key === currentWordKey) {
+    if (word.sentenceKey === currentSentenceKey) {
       return;
     }
 
     highlighter?.set(word.range);
-    currentWordKey = word.key;
+    currentSentenceKey = word.sentenceKey;
   };
 
   const updatePlaybackTime = (): void => {
@@ -734,7 +759,7 @@ async function startPlayback(
       playbackStarted = true;
       recordClientEvent("playback_started", frame / SAMPLE_RATE * 1000);
     }
-    updateWordHighlight(frame / SAMPLE_RATE);
+    updateSentenceHighlight(frame / SAMPLE_RATE);
     controls.rewindButton.disabled = frame <= 0;
     controls.forwardButton.disabled = streamFinished && frame >= receivedFrames;
     const seconds = Math.max(0, frame / SAMPLE_RATE);

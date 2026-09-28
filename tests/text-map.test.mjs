@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { locateWordOffsets, normalizeForSearch } from "../extension/text-map.ts";
+import { locateWordOffsets, normalizeForSearch, sentenceSpans } from "../extension/text-map.ts";
+
+test("groups words by sentence without including leading spaces", () => {
+  assert.deepEqual(sentenceSpans("First sentence.  Second sentence?"), [
+    { start: 0, end: 15 },
+    { start: 17, end: 33 },
+  ]);
+});
 
 test("matches spoken nth to rendered superscript text", () => {
   const page = normalizeForSearch("for the nᵗʰ time on how");
