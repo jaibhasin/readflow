@@ -22,6 +22,7 @@ export default defineConfig({
       closeBundle() {
         mkdirSync("dist", { recursive: true });
         cpSync("extension/manifest.json", "dist/manifest.json");
+        cpSync("extension/highlight.css", "dist/highlight.css");
       },
     },
   ],
