@@ -61,6 +61,7 @@ npm run build
 ```
 
 Open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select this project's `dist/` folder.
+After rebuilding, click **Reload** on the Readflow extension card, then refresh the article tab so Chrome replaces its old page script.
 Keep the local bridge running while listening.
 
 On an article page, choose **Listen to article** to read the article.
