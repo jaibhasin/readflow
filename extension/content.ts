@@ -1,4 +1,5 @@
 import { isProbablyReaderable, Readability } from "@mozilla/readability";
+import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenText } from "./spoken-text";
 import { foldCharacter, locateWordOffsets, normalizeForSearch } from "./text-map";
 
@@ -397,6 +398,7 @@ async function startPlayback(
   let pendingByte = new Uint8Array();
   let receivedFrames = 0;
   let seekStartFrame = 0;
+  let pendingSeekFrame: number | null = null;
   let nextStart = 0;
   let streamFinished = false;
   let playbackComplete = false;
@@ -526,12 +528,29 @@ async function startPlayback(
     audioSource.start(start, offsetFrames / SAMPLE_RATE);
   };
 
+  const scheduleFromFrame = (targetFrame: number): void => {
+    for (const timelineEntry of audioTimeline) {
+      const offsetFrames = Math.max(0, targetFrame - timelineEntry.firstFrame);
+      scheduleBuffer(timelineEntry, offsetFrames);
+    }
+  };
+
   const scheduleSamples = (samples: Float32Array<ArrayBuffer>): void => {
     const buffer = context.createBuffer(1, samples.length, SAMPLE_RATE);
     buffer.copyToChannel(samples, 0);
     const timelineEntry = { buffer, firstFrame: receivedFrames };
     audioTimeline.push(timelineEntry);
     receivedFrames += samples.length;
+    if (pendingSeekFrame !== null) {
+      const seek = resolveSeekTarget(pendingSeekFrame, receivedFrames, streamFinished, START_BUFFER_FRAMES);
+      if (seek.waiting) {
+        return;
+      }
+      pendingSeekFrame = null;
+      seekStartFrame = seek.targetFrame;
+      scheduleFromFrame(seek.targetFrame);
+      return;
+    }
     scheduleBuffer(timelineEntry, 0);
   };
 
@@ -587,7 +606,9 @@ async function startPlayback(
   };
 
   const seekTo = (requestedFrame: number): void => {
-    const targetFrame = Math.floor(Math.min(receivedFrames, Math.max(0, requestedFrame)));
+    const { targetFrame, waiting } = resolveSeekTarget(
+      requestedFrame, receivedFrames, streamFinished, START_BUFFER_FRAMES,
+    );
     recordClientEvent("seek", targetFrame / SAMPLE_RATE * 1000);
     for (const audioSource of sources) {
       audioSource.onended = null;
@@ -596,17 +617,21 @@ async function startPlayback(
     sources.clear();
     scheduledRanges.length = 0;
     seekStartFrame = targetFrame;
+    pendingSeekFrame = waiting ? targetFrame : null;
     nextStart = 0;
     playbackComplete = false;
+    highlighter?.clear();
+    currentWordKey = "";
     controls.pauseButton.textContent = context.state === "running" ? "Pause" : "Play";
 
-    for (const timelineEntry of audioTimeline) {
-      const offsetFrames = Math.max(0, targetFrame - timelineEntry.firstFrame);
-      scheduleBuffer(timelineEntry, offsetFrames);
+    if (waiting) {
+      controls.status.textContent = `Buffering to ${formatTime(targetFrame / SAMPLE_RATE)}…`;
+    } else {
+      scheduleFromFrame(targetFrame);
     }
 
-    controls.rewindButton.disabled = receivedFrames === 0 || targetFrame === 0;
-    controls.forwardButton.disabled = receivedFrames === 0 || targetFrame === receivedFrames;
+    controls.rewindButton.disabled = targetFrame === 0;
+    controls.forwardButton.disabled = streamFinished && targetFrame === receivedFrames;
     cancelAnimationFrame(animationFrame);
     animationFrame = requestAnimationFrame(updatePlaybackTime);
     if (streamFinished && sources.size === 0) {
@@ -615,7 +640,7 @@ async function startPlayback(
   };
 
   const seekBy = (seconds: number): void => {
-    seekTo(getAudibleFrame() + seconds * SAMPLE_RATE);
+    seekTo((pendingSeekFrame ?? getAudibleFrame()) + seconds * SAMPLE_RATE);
   };
 
   const rebuildWordRanges = (): void => {
@@ -711,7 +736,7 @@ async function startPlayback(
     }
     updateWordHighlight(frame / SAMPLE_RATE);
     controls.rewindButton.disabled = frame <= 0;
-    controls.forwardButton.disabled = frame >= receivedFrames;
+    controls.forwardButton.disabled = streamFinished && frame >= receivedFrames;
     const seconds = Math.max(0, frame / SAMPLE_RATE);
     const state = context.state === "suspended" ? "Paused" : "Playing";
     controls.status.textContent = `${state} · ${formatTime(seconds)}`;
@@ -753,6 +778,9 @@ async function startPlayback(
       if (receivedFrames === 0) {
         reportError("Fish Audio returned no audio.");
         return;
+      }
+      if (pendingSeekFrame !== null) {
+        seekTo(pendingSeekFrame);
       }
       finishIfReady();
     } else if (message.event === "error") {
