@@ -63,6 +63,16 @@ if (articleText && !document.getElementById("readflow-controls")) {
     setCurrentPlaybackSpeed?.(selectedPlaybackRate);
   });
 
+  controls.minimizeButton.addEventListener("click", () => setCompactMode(controls, true));
+  controls.expandButton.addEventListener("click", () => setCompactMode(controls, false));
+  controls.miniActionButton.addEventListener("click", () => {
+    if (controls.playerControls.hidden) {
+      controls.articleButton.click();
+    } else {
+      controls.pauseButton.click();
+    }
+  });
+
   controls.selectionButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
   });
@@ -236,9 +246,14 @@ function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
 function createControls(): {
   host: HTMLDivElement;
   dock: HTMLDivElement;
+  fullPlayer: HTMLDivElement;
+  miniPlayer: HTMLDivElement;
   articleButton: HTMLButtonElement;
   debugButton: HTMLButtonElement;
   speedButton: HTMLButtonElement;
+  minimizeButton: HTMLButtonElement;
+  expandButton: HTMLButtonElement;
+  miniActionButton: HTMLButtonElement;
   selectionButton: HTMLButtonElement;
   playerControls: HTMLDivElement;
   rewindButton: HTMLButtonElement;
@@ -246,6 +261,7 @@ function createControls(): {
   forwardButton: HTMLButtonElement;
   stopButton: HTMLButtonElement;
   status: HTMLDivElement;
+  miniStatus: HTMLSpanElement;
   tapeTitle: HTMLElement;
 } {
   const host = document.createElement("div");
@@ -315,6 +331,12 @@ function createControls(): {
         width: min(300px, calc(100vw - 32px));
       }
 
+      #dock[data-compact="true"] {
+        border-radius: 13px;
+        padding: 8px;
+        width: min(236px, calc(100vw - 32px));
+      }
+
       #dock-header {
         align-items: center;
         display: flex;
@@ -363,6 +385,22 @@ function createControls(): {
       #debug-button:hover {
         background: transparent;
         color: #eff5ef;
+      }
+
+      #minimize-button {
+        background: transparent;
+        border: 1px solid #667471;
+        border-radius: 6px;
+        box-shadow: none;
+        color: #d6dfd6;
+        font: 700 17px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        min-height: 26px;
+        min-width: 26px;
+        padding: 0;
+      }
+
+      #minimize-button:hover {
+        background: #354144;
       }
 
       #speed-button {
@@ -588,6 +626,60 @@ function createControls(): {
         background: linear-gradient(180deg, #eaf5bf, #c3d690);
       }
 
+      #mini-player {
+        align-items: center;
+        display: flex;
+        gap: 7px;
+      }
+
+      #mini-mark {
+        align-items: center;
+        background: #172022;
+        border: 2px solid #93a093;
+        border-radius: 50%;
+        box-shadow: inset 0 0 0 2px #11191b;
+        color: #dce9ac;
+        display: flex;
+        flex: 0 0 26px;
+        font: 800 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        height: 26px;
+        justify-content: center;
+      }
+
+      #dock[data-transport="playing"] #mini-mark {
+        box-shadow: inset 0 0 0 2px #11191b, 0 0 9px rgb(214 233 134 / 40%);
+      }
+
+      #mini-status {
+        color: #d5e4c1;
+        flex: 1;
+        font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #mini-action-button,
+      #expand-button {
+        min-height: 34px;
+        padding: 0;
+      }
+
+      #mini-action-button {
+        background: linear-gradient(180deg, #dce9ac, #afc37e);
+        border-color: #e0edb1;
+        border-bottom-color: #6a7e46;
+        color: #243323;
+        flex: 0 0 34px;
+        font-size: 16px;
+      }
+
+      #expand-button {
+        flex: 0 0 26px;
+        font-size: 18px;
+      }
+
       @keyframes reel-turn {
         to { transform: rotate(360deg); }
       }
@@ -615,12 +707,14 @@ function createControls(): {
     </style>
     <div class="readflow-layer">
       <button id="selection-button" type="button" hidden>Listen to selection</button>
-      <div id="dock" role="group" aria-label="Readflow player" data-transport="idle">
+      <div id="dock" role="group" aria-label="Readflow player" data-transport="idle" data-compact="false">
+        <div id="full-player">
         <div id="dock-header">
           <span id="brand">READFLOW</span>
           <div id="header-actions">
             <button id="speed-button" type="button" title="Playback speed: 1 time" aria-label="Playback speed 1 time. Change speed">1×</button>
             <button id="debug-button" type="button" title="Open Readflow diagnostics">Debug</button>
+            <button id="minimize-button" type="button" title="Minimize player" aria-label="Minimize Readflow player">−</button>
           </div>
         </div>
         <div id="cassette-window" aria-hidden="true">
@@ -640,6 +734,13 @@ function createControls(): {
           <button id="stop-button" type="button">Stop</button>
         </div>
         <button id="article-button" type="button">Listen to article</button>
+        </div>
+        <div id="mini-player" hidden>
+          <span id="mini-mark" aria-hidden="true">RF</span>
+          <span id="mini-status" role="status" aria-live="polite">Ready to listen</span>
+          <button id="mini-action-button" type="button" aria-label="Listen to article" title="Listen to article">▶</button>
+          <button id="expand-button" type="button" aria-label="Expand Readflow player" title="Expand player">⌃</button>
+        </div>
       </div>
     </div>
   `;
@@ -652,9 +753,14 @@ function createControls(): {
   return {
     host,
     dock: shadow.querySelector<HTMLDivElement>("#dock")!,
+    fullPlayer: shadow.querySelector<HTMLDivElement>("#full-player")!,
+    miniPlayer: shadow.querySelector<HTMLDivElement>("#mini-player")!,
     articleButton: shadow.querySelector<HTMLButtonElement>("#article-button")!,
     debugButton: shadow.querySelector<HTMLButtonElement>("#debug-button")!,
     speedButton: shadow.querySelector<HTMLButtonElement>("#speed-button")!,
+    minimizeButton: shadow.querySelector<HTMLButtonElement>("#minimize-button")!,
+    expandButton: shadow.querySelector<HTMLButtonElement>("#expand-button")!,
+    miniActionButton: shadow.querySelector<HTMLButtonElement>("#mini-action-button")!,
     selectionButton: shadow.querySelector<HTMLButtonElement>("#selection-button")!,
     playerControls: shadow.querySelector<HTMLDivElement>("#player-controls")!,
     rewindButton: shadow.querySelector<HTMLButtonElement>("#rewind-button")!,
@@ -662,6 +768,7 @@ function createControls(): {
     forwardButton: shadow.querySelector<HTMLButtonElement>("#forward-button")!,
     stopButton: shadow.querySelector<HTMLButtonElement>("#stop-button")!,
     status: shadow.querySelector<HTMLDivElement>("#status")!,
+    miniStatus: shadow.querySelector<HTMLSpanElement>("#mini-status")!,
     tapeTitle,
   };
 }
@@ -690,9 +797,33 @@ function positionSelectionButton(button: HTMLButtonElement): void {
 }
 
 function setTransportState(controls: ReturnType<typeof createControls>, state: TransportState): void {
-  if (controls.dock.dataset.transport !== state) {
-    controls.dock.dataset.transport = state;
+  if (controls.dock.dataset.transport === state) {
+    return;
   }
+  controls.dock.dataset.transport = state;
+  const canPause = state === "playing" || state === "buffering";
+  const canResume = state === "paused" || state === "finished";
+  const label = canPause ? "Pause audio" : canResume ? "Play audio" : "Listen to article";
+  controls.miniActionButton.textContent = canPause ? "Ⅱ" : "▶";
+  controls.miniActionButton.disabled = state === "connecting";
+  controls.miniActionButton.setAttribute("aria-label", label);
+  controls.miniActionButton.title = label;
+}
+
+function setPlayerStatus(controls: ReturnType<typeof createControls>, message: string): void {
+  if (controls.status.textContent === message) {
+    return;
+  }
+  controls.status.textContent = message;
+  controls.miniStatus.textContent = message;
+  controls.miniStatus.title = message;
+}
+
+function setCompactMode(controls: ReturnType<typeof createControls>, compact: boolean): void {
+  controls.dock.dataset.compact = compact ? "true" : "false";
+  controls.fullPlayer.hidden = compact;
+  controls.miniPlayer.hidden = !compact;
+  (compact ? controls.expandButton : controls.minimizeButton).focus();
 }
 
 async function startPlayback(
@@ -702,11 +833,12 @@ async function startPlayback(
   selectionRange?: Range,
 ): Promise<void> {
   stopCurrentPlayback?.();
+  controls.playerControls.hidden = true;
   const spokenText = prepareSpokenText(text);
   controls.tapeTitle.textContent = source === "Selected text" ? "Selected passage" : shortTapeTitle(document.title);
   controls.tapeTitle.title = controls.tapeTitle.textContent;
   setTransportState(controls, "connecting");
-  controls.status.textContent = `Connecting for ${source.toLowerCase()} audio…`;
+  setPlayerStatus(controls, `Connecting for ${source.toLowerCase()} audio…`);
   controls.status.hidden = false;
 
   let context: AudioContext;
@@ -714,7 +846,7 @@ async function startPlayback(
     context = new AudioContext({ sampleRate: SAMPLE_RATE });
   } catch {
     setTransportState(controls, "error");
-    controls.status.textContent = "This browser could not create a 44.1 kHz audio stream.";
+    setPlayerStatus(controls, "This browser could not create a 44.1 kHz audio stream.");
     controls.status.hidden = false;
     return;
   }
@@ -818,7 +950,7 @@ async function startPlayback(
   controls.forwardButton.onclick = () => seekBy(15);
   controls.stopButton.onclick = () => {
     cleanup();
-    controls.status.textContent = "Stopped";
+    setPlayerStatus(controls, "Stopped");
     setTransportState(controls, "stopped");
     controls.playerControls.hidden = true;
     if (stopCurrentPlayback === cleanup) {
@@ -829,7 +961,7 @@ async function startPlayback(
   const reportError = (message: string): void => {
     recordClientEvent("playback_error", getAudibleFrame() / SAMPLE_RATE * 1000, message);
     cleanup(false);
-    controls.status.textContent = message;
+    setPlayerStatus(controls, message);
     setTransportState(controls, "error");
     controls.playerControls.hidden = true;
     if (stopCurrentPlayback === cleanup) {
@@ -843,7 +975,7 @@ async function startPlayback(
       highlighter?.clear();
       currentSentenceKey = "";
       recordClientEvent("playback_finished", getAudibleFrame() / SAMPLE_RATE * 1000);
-      controls.status.textContent = "Finished";
+      setPlayerStatus(controls, "Finished");
       setTransportState(controls, "finished");
       controls.pauseButton.textContent = "Play";
       cancelAnimationFrame(animationFrame);
@@ -980,7 +1112,7 @@ async function startPlayback(
     controls.pauseButton.textContent = context.state === "running" ? "Pause" : "Play";
 
     if (waiting) {
-      controls.status.textContent = `Buffering to ${formatTime(targetFrame / SAMPLE_RATE)}…`;
+      setPlayerStatus(controls, `Buffering to ${formatTime(targetFrame / SAMPLE_RATE)}…`);
       setTransportState(controls, "buffering");
     } else {
       scheduleFromFrame(targetFrame);
@@ -1130,7 +1262,7 @@ async function startPlayback(
     controls.forwardButton.disabled = streamFinished && frame >= receivedFrames;
     const seconds = Math.max(0, frame / SAMPLE_RATE);
     const state = context.state === "suspended" ? "Paused" : hasAudibleAudio ? "Playing" : "Buffering";
-    controls.status.textContent = `${state} · ${formatTime(seconds)}`;
+    setPlayerStatus(controls, `${state} · ${formatTime(seconds)}`);
     animationFrame = requestAnimationFrame(updatePlaybackTime);
   };
 
@@ -1205,7 +1337,7 @@ async function startPlayback(
     } else {
       window.setTimeout(prepareTextIndex, 0);
     }
-    controls.status.textContent = "Waiting for 100 ms of audio…";
+    setPlayerStatus(controls, "Waiting for 100 ms of audio…");
     setTransportState(controls, "buffering");
     animationFrame = requestAnimationFrame(updatePlaybackTime);
   } catch {
