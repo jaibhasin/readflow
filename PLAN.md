@@ -30,7 +30,7 @@ The floating player stays within the current tab; navigation starts a new sessio
 | Article detection | Mozilla Readability on a cloned document, plus live DOM paragraph matching | Good main-content extraction while retaining links to visible text for highlighting. |
 | Highlight | CSS Highlight API and DOM `Range` | Highlights words without inserting spans into an article. |
 | Audio | HTMLAudioElement with MediaSource | Streams compressed audio into a normal seekable player. |
-| Local TTS bridge | Node.js 22 HTTP server | Reads `API_KEY` from `.env` and keeps it outside the extension bundle. |
+| Local TTS bridge | Python 3.12+, FastAPI, Uvicorn, HTTPX, python-dotenv | Reads `API_KEY` from `.env` and relays Fish Audio's stream without bundling the key. |
 | TTS | Fish Audio `s2.1-pro-free` timestamp stream | Supplies audio and alignment data together. |
 
 No account system or database is needed for the local MVP.
@@ -40,7 +40,7 @@ No account system or database is needed for the local MVP.
 ```text
 Current page text or selection
   -> content script extracts readable text and live DOM ranges
-  -> extension service worker requests local Node bridge
+  -> extension service worker requests local FastAPI bridge
   -> bridge calls Fish Audio with API_KEY from .env
   -> Fish Audio SSE audio and alignment events
   -> bridge and service worker relay events to the content script
@@ -49,6 +49,8 @@ Current page text or selection
 
 The Fish endpoint is `POST /v1/tts/stream/with-timestamp` with the `model: s2.1-pro-free` header.
 Its response contains base64 audio chunks and cumulative alignment snapshots.
+The FastAPI bridge uses an HTTPX async streaming request and returns the Fish Audio events through `StreamingResponse` as `text/event-stream`.
+When playback stops or the tab navigates, the bridge closes the upstream Fish Audio request.
 The client appends every audio chunk in arrival order and replaces the latest alignment snapshot for each `chunk_seq`.
 It adds `chunk_audio_offset_sec` to each word's local start and end times before comparing them with the audio player's current time.
 
@@ -65,13 +67,13 @@ Long articles may require bounded text requests and a rolling buffer so that one
 ## Local key handling
 
 The existing `.env` contains `API_KEY` and remains untracked.
-The Node bridge reads it at startup and makes Fish Audio requests on behalf of the extension.
+The FastAPI bridge loads it with `python-dotenv` at startup and makes Fish Audio requests on behalf of the extension.
 The key never appears in the extension package, browser storage, page DOM, or logs.
 The bridge binds to loopback only and accepts requests from this local extension workflow.
 
 ## Implementation order
 
-1. Set up the extension build, manifest, local bridge, and a documented local launch flow.
+1. Set up the extension build, manifest, FastAPI bridge, and a documented local launch flow using Uvicorn.
 2. Add article extraction and selected-text detection, with the small on-page actions.
 3. Stream Fish audio through the bridge and play it in the floating player.
 4. Add word alignment, subtle highlighting, paragraph scrolling, and 15-second seeking.
