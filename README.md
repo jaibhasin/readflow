@@ -68,6 +68,7 @@ On an article page, choose **Listen to article** to read the article.
 Select text and choose **Listen** to read only that selection.
 Use **Back 15 seconds**, **Pause**, **Forward 15 seconds**, or **Stop** in the small player while audio is playing.
 The cassette label shows the article title and site, and its reels turn while audio is playing.
+Choose **−** to shrink the player to a compact view with status and play or pause, then **⌃** to expand it.
 The speed button cycles through 0.75×, 1×, 1.25×, and 1.5×.
 Speed changes take effect immediately and also change voice pitch.
 If **Forward 15 seconds** reaches audio that has not arrived yet, playback waits at that target until enough audio is buffered.
