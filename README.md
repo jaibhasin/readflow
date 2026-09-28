@@ -69,6 +69,8 @@ Select text and choose **Listen** to read only that selection.
 Use **Back 15 seconds**, **Pause**, **Forward 15 seconds**, or **Stop** in the small player while audio is playing.
 Each Listen action sends the full text once to the local bridge, which feeds Fish text fragments of up to 100 characters in one streaming session.
 That is usually around 15 to 20 English words per fragment, but the word count varies.
+Readflow converts inline ordinal math such as `$n^\text{th}$` to “nth” before sending it to Fish.
+Other formulas are left as written until Readflow has a reliable spoken form for them.
 
 ## View listen diagnostics
 
@@ -96,4 +98,5 @@ Fish Audio events should arrive as the service generates audio and timestamp dat
 ```sh
 npm run check
 npm run build
+node --experimental-strip-types --test tests/*.test.mjs
 ```
