@@ -236,14 +236,31 @@ async function startPlayback(
   let playbackComplete = false;
   let stopped = false;
   let animationFrame = 0;
+  let playbackStarted = false;
+  const sessionId = crypto.randomUUID();
+  const sessionStarted = performance.now();
 
-  const cleanup = (): void => {
+  const recordClientEvent = (kind: string, playbackMs?: number, value?: unknown): void => {
+    port.postMessage({
+      type: "client_event",
+      kind,
+      clientElapsedMs: performance.now() - sessionStarted,
+      playbackMs,
+      value,
+    });
+  };
+  recordClientEvent("listen_started");
+
+  const cleanup = (recordStop = true): void => {
     if (stopped) {
       return;
     }
 
     stopped = true;
     cancelAnimationFrame(animationFrame);
+    if (recordStop && !playbackComplete) {
+      recordClientEvent("stopped", getAudibleFrame() / SAMPLE_RATE * 1000);
+    }
     port.disconnect();
     for (const audioSource of sources) {
       audioSource.stop();
@@ -267,10 +284,12 @@ async function startPlayback(
     if (context.state === "running") {
       void context.suspend().then(() => {
         controls.pauseButton.textContent = "Play";
+        recordClientEvent("paused", getAudibleFrame() / SAMPLE_RATE * 1000);
       });
     } else {
       void context.resume().then(() => {
         controls.pauseButton.textContent = "Pause";
+        recordClientEvent("resumed", getAudibleFrame() / SAMPLE_RATE * 1000);
       });
     }
   };
@@ -286,7 +305,8 @@ async function startPlayback(
   };
 
   const reportError = (message: string): void => {
-    cleanup();
+    recordClientEvent("playback_error", getAudibleFrame() / SAMPLE_RATE * 1000, message);
+    cleanup(false);
     controls.status.textContent = message;
     controls.playerControls.hidden = true;
     if (stopCurrentPlayback === cleanup) {
@@ -297,6 +317,7 @@ async function startPlayback(
   const finishIfReady = (): void => {
     if (streamFinished && sources.size === 0 && pendingFrameCount === 0 && !stopped) {
       playbackComplete = true;
+      recordClientEvent("playback_finished", getAudibleFrame() / SAMPLE_RATE * 1000);
       controls.status.textContent = "Finished";
       controls.pauseButton.textContent = "Play";
       cancelAnimationFrame(animationFrame);
@@ -395,6 +416,7 @@ async function startPlayback(
 
   const seekTo = (requestedFrame: number): void => {
     const targetFrame = Math.floor(Math.min(receivedFrames, Math.max(0, requestedFrame)));
+    recordClientEvent("seek", targetFrame / SAMPLE_RATE * 1000);
     for (const audioSource of sources) {
       audioSource.onended = null;
       audioSource.stop();
@@ -435,6 +457,12 @@ async function startPlayback(
     }
 
     const frame = getAudibleFrame();
+    const outputContextTime = context.getOutputTimestamp().contextTime ?? context.currentTime;
+    const hasAudibleAudio = scheduledRanges.some((range) => outputContextTime >= range.start);
+    if (!playbackStarted && hasAudibleAudio && context.state === "running") {
+      playbackStarted = true;
+      recordClientEvent("playback_started", frame / SAMPLE_RATE * 1000);
+    }
     controls.rewindButton.disabled = frame <= 0;
     controls.forwardButton.disabled = frame >= receivedFrames;
     const seconds = Math.max(0, frame / SAMPLE_RATE);
@@ -473,7 +501,15 @@ async function startPlayback(
 
   try {
     await context.resume();
-    port.postMessage({ text });
+    port.postMessage({
+      type: "start",
+      sessionId,
+      source: source === "Article" ? "article" : "selection",
+      text,
+      textCharCount: text.length,
+      wordCount: text.trim().split(/\s+/).length,
+      startedAt: new Date().toISOString(),
+    });
     controls.status.textContent = "Waiting for 100 ms of audio…";
     animationFrame = requestAnimationFrame(updatePlaybackTime);
   } catch {

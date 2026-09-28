@@ -2,6 +2,8 @@ import asyncio
 import base64
 import json
 import os
+import time
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Annotated
@@ -25,6 +27,8 @@ SAMPLE_RATE = 44_100
 class TTSRequest(BaseModel):
     text: Annotated[str, Field(min_length=1)]
     reference_id: str = DEFAULT_VOICE_ID
+    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    source: str = "article"
 
 
 def text_fragments(text: str, max_length: int = TEXT_FRAGMENT_LENGTH) -> Iterator[str]:
@@ -48,15 +52,43 @@ def pack_message(message: dict[str, object]) -> bytes:
     return msgpack.packb(message, use_bin_type=True)
 
 
-async def send_text(socket: ClientConnection, text: str) -> None:
-    for fragment in text_fragments(text):
+async def send_text(
+    socket: ClientConnection,
+    text: str,
+    fragments: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
+    started = time.perf_counter()
+    sent_fragments = fragments if fragments is not None else []
+    for index, fragment in enumerate(text_fragments(text)):
         await socket.send(pack_message({"event": "text", "text": fragment}))
+        sent_fragments.append({
+            "index": index,
+            "text": fragment,
+            "char_count": len(fragment),
+            "sent_elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
+        })
 
     await socket.send(pack_message({"event": "stop"}))
+    return sent_fragments
 
 
-async def fish_events(socket: ClientConnection, text: str) -> AsyncIterator[bytes]:
-    sender = asyncio.create_task(send_text(socket, text))
+async def fish_events(
+    socket: ClientConnection,
+    text: str,
+    session_id: str = "",
+    bridge_connect_ms: float = 0,
+) -> AsyncIterator[bytes]:
+    started = time.perf_counter()
+    sent_fragments: list[dict[str, object]] = []
+    sender = asyncio.create_task(send_text(socket, text, sent_fragments))
+    event_index = 0
+    audio_index = 0
+
+    yield encode_sse({
+        "event": "connected",
+        "session_id": session_id,
+        "bridge_connect_ms": round(bridge_connect_ms, 1),
+    })
 
     try:
         async for frame in socket:
@@ -65,10 +97,21 @@ async def fish_events(socket: ClientConnection, text: str) -> AsyncIterator[byte
 
             message = msgpack.unpackb(frame, raw=False)
             event = message.get("event")
+            event_index += 1
+            arrival = {
+                "session_id": session_id,
+                "provider_event_index": event_index,
+                "bridge_elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
+                "fish_time": message.get("time"),
+            }
 
             if event == "audio":
+                audio_index += 1
                 payload = {
                     "event": "audio",
+                    **arrival,
+                    "audio_event_index": audio_index,
+                    "audio_byte_count": len(message["audio"]),
                     "audio_base64": base64.b64encode(message["audio"]).decode("ascii"),
                     "alignment": message.get("alignment"),
                     "chunk_seq": message.get("chunk_seq"),
@@ -78,14 +121,34 @@ async def fish_events(socket: ClientConnection, text: str) -> AsyncIterator[byte
                 yield encode_sse(payload)
             elif event == "error" or (event == "finish" and message.get("reason") == "error"):
                 detail = message.get("message") or message.get("error")
-                yield encode_sse({"event": "error", "message": detail or "Fish Audio could not generate speech."})
+                yield encode_sse({
+                    "event": "error", **arrival,
+                    "message": detail or "Fish Audio could not generate speech.",
+                    "text_fragments": sent_fragments,
+                })
                 return
             elif event == "finish":
-                yield encode_sse({"event": "finish"})
+                await sender
+                yield encode_sse({
+                    "event": "finish", **arrival,
+                    "text_fragments": sent_fragments,
+                })
                 return
-        yield encode_sse({"event": "error", "message": "Fish Audio ended before finishing speech."})
+        yield encode_sse({
+            "event": "error",
+            "session_id": session_id,
+            "bridge_elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
+            "message": "Fish Audio ended before finishing speech.",
+            "text_fragments": sent_fragments,
+        })
     except (WebSocketException, ValueError, KeyError, TypeError):
-        yield encode_sse({"event": "error", "message": "The connection to Fish Audio ended unexpectedly."})
+        yield encode_sse({
+            "event": "error",
+            "session_id": session_id,
+            "bridge_elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
+            "message": "The connection to Fish Audio ended unexpectedly.",
+            "text_fragments": sent_fragments,
+        })
     finally:
         sender.cancel()
         await asyncio.gather(sender, return_exceptions=True)
@@ -113,6 +176,7 @@ def create_app(api_key: str | None = None) -> FastAPI:
             )
 
         socket: ClientConnection | None = None
+        request_started = time.perf_counter()
         try:
             socket = await connect(
                 FISH_AUDIO_URL,
@@ -124,6 +188,7 @@ def create_app(api_key: str | None = None) -> FastAPI:
                 open_timeout=10,
                 close_timeout=5,
             )
+            bridge_connect_ms = (time.perf_counter() - request_started) * 1000
             await socket.send(
                 pack_message(
                     {
@@ -148,7 +213,7 @@ def create_app(api_key: str | None = None) -> FastAPI:
             ) from error
 
         return StreamingResponse(
-            fish_events(socket, payload.text),
+            fish_events(socket, payload.text, payload.session_id, bridge_connect_ms),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

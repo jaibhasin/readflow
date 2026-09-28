@@ -9,6 +9,7 @@ export default defineConfig({
       input: {
         background: "extension/background.ts",
         content: "extension/content.ts",
+        diagnostics: "extension/diagnostics.html",
       },
       output: {
         entryFileNames: "[name].js",

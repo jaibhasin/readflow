@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Readflow diagnostics</title>
+    <style>
+      :root { color-scheme: dark; font: 13px/1.5 system-ui, sans-serif; background: #17181a; color: #f1f1f2; }
+      body { margin: 0; min-width: 680px; }
+      main { padding: 20px; }
+      h1, h2, p { margin: 0 0 10px; }
+      h1 { font-size: 19px; }
+      h2 { font-size: 14px; }
+      .privacy, .muted { color: #a7a8ad; }
+      .record-option { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
+      .record-option input { accent-color: #a9c4ff; }
+      .toolbar, .detail-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .toolbar { margin-top: 22px; }
+      .columns { display: grid; grid-template-columns: 250px minmax(360px, 1fr); gap: 16px; }
+      button { border: 1px solid #414247; border-radius: 8px; background: #25262a; color: inherit; padding: 8px 10px; cursor: pointer; text-align: left; }
+      button:hover { background: #303137; }
+      .session-item { display: block; width: 100%; margin-bottom: 8px; white-space: pre-line; }
+      #session-detail { min-width: 0; }
+      .detail-actions { justify-content: flex-start; margin-bottom: 12px; }
+      details { border-top: 1px solid #34353a; padding: 8px 0; }
+      summary { cursor: pointer; color: #d8d8dc; }
+      pre { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #c9cad0; font: 11px/1.5 ui-monospace, monospace; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Readflow diagnostics</h1>
+      <p class="privacy">Audio and your Fish API key are never saved here.</p>
+      <label class="record-option">
+        <input id="detailed-toggle" type="checkbox" />
+        Record detailed trace for next listen
+      </label>
+      <p id="record-status" class="muted" aria-live="polite"></p>
+      <div class="toolbar">
+        <h2>Recent listens</h2>
+        <button id="clear-button" type="button">Clear all</button>
+      </div>
+      <div class="columns">
+        <section id="session-list" aria-label="Recent listens"></section>
+        <section id="session-detail" aria-live="polite"></section>
+      </div>
+    </main>
+    <script type="module" src="./diagnostics.ts"></script>
+  </body>
+</html>

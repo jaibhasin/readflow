@@ -61,14 +61,23 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
 
         events = [
             json.loads(record.decode().removeprefix("data: "))
-            async for record in fish_events(socket, "hello")
+            async for record in fish_events(socket, "hello", "session-1")
         ]
 
-        self.assertEqual(events[0]["audio_base64"], base64.b64encode(b"\x00\x80").decode())
-        self.assertEqual(events[0]["alignment"], alignment)
-        self.assertEqual(events[0]["chunk_seq"], 3)
-        self.assertEqual(events[0]["chunk_audio_offset_sec"], 1.25)
-        self.assertEqual(events[1], {"event": "finish"})
+        self.assertEqual(events[0]["event"], "connected")
+        self.assertEqual(events[0]["session_id"], "session-1")
+        self.assertEqual(events[1]["audio_base64"], base64.b64encode(b"\x00\x80").decode())
+        self.assertEqual(events[1]["alignment"], alignment)
+        self.assertEqual(events[1]["chunk_seq"], 3)
+        self.assertEqual(events[1]["chunk_audio_offset_sec"], 1.25)
+        self.assertEqual(events[1]["audio_event_index"], 1)
+        self.assertEqual(events[1]["audio_byte_count"], 2)
+        self.assertEqual(events[1]["session_id"], "session-1")
+        self.assertGreaterEqual(events[1]["bridge_elapsed_ms"], 0)
+        self.assertEqual(events[2]["event"], "finish")
+        self.assertEqual(events[2]["session_id"], "session-1")
+        self.assertEqual(events[2]["text_fragments"][0]["text"], "hello")
+        self.assertEqual(events[2]["text_fragments"][0]["char_count"], 5)
         self.assertTrue(socket.closed)
 
 

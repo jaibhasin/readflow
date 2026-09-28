@@ -70,6 +70,15 @@ Use **Back 15 seconds**, **Pause**, **Forward 15 seconds**, or **Stop** in the s
 Each Listen action sends the full text once to the local bridge, which feeds Fish text fragments of up to 100 characters in one streaming session.
 That is usually around 15 to 20 English words per fragment, but the word count varies.
 
+## View listen diagnostics
+
+Click the Readflow toolbar icon to see the last 10 listens, including the source, text and audio counts, and whether the request finished or stopped.
+The summary is saved only in this browser profile.
+Turn on **Record detailed trace for next listen** before listening to save the exact text, each Fish text fragment, provider timing, and returned word timestamps for one listen.
+Open a listen and expand its events to inspect the saved text and timestamp snapshots, or export that listen as JSON.
+Detailed recording turns itself off after one listen.
+No audio data or Fish API key is saved, and **Clear all** removes the local diagnostics.
+
 ## Check the bridge stream
 
 With the bridge running and `FISH_API_KEY` configured, send a short request.
