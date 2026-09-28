@@ -1,4 +1,6 @@
 import { isProbablyReaderable, Readability } from "@mozilla/readability";
+import { prepareSpokenText } from "./spoken-text";
+import { foldCharacter, locateWordOffsets, normalizeForSearch } from "./text-map";
 
 let stopCurrentPlayback: (() => void) | null = null;
 const SAMPLE_RATE = 44_100;
@@ -130,20 +132,6 @@ function createPageTextIndex(): PageTextIndex {
   }
 
   return { text: normalized, spans };
-}
-
-function normalizeForSearch(text: string): string {
-  return text.replace(/\s+/g, " ").trim().split("").map(foldCharacter).join("");
-}
-
-function foldCharacter(character: string): string {
-  const folded = character.toLowerCase();
-  return folded.length === 1 ? folded : character;
-}
-
-function findTextPosition(index: PageTextIndex, text: string, startAt: number): number {
-  const needle = normalizeForSearch(text);
-  return needle ? index.text.indexOf(needle, startAt) : -1;
 }
 
 function findSourceStart(index: PageTextIndex, text: string, range?: Range): number {
@@ -379,6 +367,7 @@ async function startPlayback(
   selectionRange?: Range,
 ): Promise<void> {
   stopCurrentPlayback?.();
+  const spokenText = prepareSpokenText(text);
   controls.status.textContent = `Connecting for ${source.toLowerCase()} audio…`;
   controls.status.hidden = false;
 
@@ -642,23 +631,18 @@ async function startPlayback(
         end: snapshot.offset + segment.end,
       })),
     ).sort((left, right) => left.start - right.start);
-    let cursor = sourceStart;
+    const offsets = locateWordOffsets(pageTextIndex.text, segments.map((segment) => segment.text), sourceStart);
     const words: typeof locatedWords = [];
 
-    for (const segment of segments) {
-      const matchAt = findTextPosition(pageTextIndex, segment.text, cursor);
+    for (const [index, segment] of segments.entries()) {
+      const matchAt = offsets[index];
       const matchedText = normalizeForSearch(segment.text);
-      if (matchAt < 0 || !matchedText || !Number.isFinite(segment.start) || !Number.isFinite(segment.end)) {
-        continue;
-      }
-      if (matchAt - cursor > 80) {
+      if (matchAt === null || !matchedText || !Number.isFinite(segment.start) || !Number.isFinite(segment.end)) {
         if (!didReportHighlightMismatch) {
-          recordClientEvent("highlight_text_mismatch", segment.start * 1000, {
-            skipped_page_chars: matchAt - cursor,
-          });
+          recordClientEvent("highlight_text_mismatch", segment.start * 1000);
           didReportHighlightMismatch = true;
         }
-        break;
+        continue;
       }
 
       const first = getTextPoint(pageTextIndex, matchAt);
@@ -674,7 +658,6 @@ async function startPlayback(
         break;
       }
       words.push({ key: segment.key, start: segment.start, end: segment.end, range });
-      cursor = matchAt + matchedText.length;
     }
     locatedWords = words;
     if (!didReportHighlightMapping) {
@@ -783,9 +766,9 @@ async function startPlayback(
       type: "start",
       sessionId,
       source: source === "Article" ? "article" : "selection",
-      text,
-      textCharCount: text.length,
-      wordCount: text.trim().split(/\s+/).length,
+      text: spokenText,
+      textCharCount: spokenText.length,
+      wordCount: spokenText.trim().split(/\s+/).length,
       startedAt: new Date().toISOString(),
     });
     const prepareTextIndex = (): void => {
