@@ -95,6 +95,8 @@ Fish Audio events should arrive as the service generates audio and timestamp dat
 
 ## Run checks
 
+The TypeScript unit tests below require Node.js 22.6 or newer.
+
 ```sh
 npm run check
 npm run build
