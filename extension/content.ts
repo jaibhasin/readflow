@@ -803,6 +803,7 @@ function setTransportState(controls: ReturnType<typeof createControls>, state: T
   controls.dock.dataset.transport = state;
   const canPause = state === "playing" || state === "buffering";
   const canResume = state === "paused" || state === "finished";
+  controls.articleButton.hidden = canPause || canResume || state === "connecting";
   const label = canPause ? "Pause audio" : canResume ? "Play audio" : "Listen to article";
   controls.miniActionButton.textContent = canPause ? "Ⅱ" : "▶";
   controls.miniActionButton.disabled = state === "connecting";
