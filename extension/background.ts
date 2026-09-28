@@ -11,6 +11,12 @@ type StreamEvent = {
   [key: string]: unknown;
 };
 
+chrome.runtime.onMessage.addListener((message: { type?: string }) => {
+  if (message.type === "open_diagnostics") {
+    void chrome.tabs.create({ url: chrome.runtime.getURL("extension/diagnostics.html") });
+  }
+});
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "readflow-tts") {
     return;

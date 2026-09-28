@@ -41,6 +41,10 @@ if (articleText && !document.getElementById("readflow-controls")) {
     void startPlayback(controls, articleText, "Article");
   });
 
+  controls.debugButton.addEventListener("click", () => {
+    void chrome.runtime.sendMessage({ type: "open_diagnostics" });
+  });
+
   controls.selectionButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
   });
@@ -216,6 +220,7 @@ function createPageWordHighlighter(): PageWordHighlighter | null {
 function createControls(): {
   host: HTMLDivElement;
   articleButton: HTMLButtonElement;
+  debugButton: HTMLButtonElement;
   selectionButton: HTMLButtonElement;
   playerControls: HTMLDivElement;
   rewindButton: HTMLButtonElement;
@@ -275,6 +280,12 @@ function createControls(): {
         right: 24px;
       }
 
+      #debug-button {
+        bottom: 24px;
+        position: fixed;
+        right: 184px;
+      }
+
       #selection-button {
         position: fixed;
         transform: translateX(-50%);
@@ -313,6 +324,7 @@ function createControls(): {
     </style>
     <div class="readflow-layer">
       <button id="article-button" type="button">Listen to article</button>
+      <button id="debug-button" type="button" title="Open Readflow diagnostics">Debug</button>
       <button id="selection-button" type="button" hidden>Listen</button>
       <div id="status" role="status" aria-live="polite" hidden></div>
       <div id="player-controls" hidden>
@@ -327,6 +339,7 @@ function createControls(): {
   return {
     host,
     articleButton: shadow.querySelector<HTMLButtonElement>("#article-button")!,
+    debugButton: shadow.querySelector<HTMLButtonElement>("#debug-button")!,
     selectionButton: shadow.querySelector<HTMLButtonElement>("#selection-button")!,
     playerControls: shadow.querySelector<HTMLDivElement>("#player-controls")!,
     rewindButton: shadow.querySelector<HTMLButtonElement>("#rewind-button")!,
@@ -384,7 +397,6 @@ async function startPlayback(
   const alignmentsByChunk = new Map<number, ChunkAlignment>();
   let locatedWords: Array<{ key: string; start: number; end: number; range: Range }> = [];
   let currentWordKey = "";
-  let lastAutoScroll = 0;
   let alignmentNeedsMapping = false;
   let didReportHighlightMapping = false;
   const sources = new Set<AudioBufferSourceNode>();
@@ -677,12 +689,6 @@ async function startPlayback(
 
     highlighter?.set(word.range);
     currentWordKey = word.key;
-    const bounds = word.range.getBoundingClientRect();
-    const now = performance.now();
-    if ((bounds.top < 0 || bounds.bottom > window.innerHeight) && now - lastAutoScroll > 700) {
-      word.range.startContainer.parentElement?.scrollIntoView({ block: "center", behavior: "smooth" });
-      lastAutoScroll = now;
-    }
   };
 
   const updatePlaybackTime = (): void => {
