@@ -1,9 +1,12 @@
 import { isProbablyReaderable, Readability } from "@mozilla/readability";
+import { bufferFramesForSpeed, nextPlaybackRate, playbackDuration, playedFrames } from "./playback-speed";
 import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenText } from "./spoken-text";
 import { foldCharacter, locateWordOffsets, normalizeForSearch, sentenceSpans } from "./text-map";
 
 let stopCurrentPlayback: (() => void) | null = null;
+let setCurrentPlaybackSpeed: ((rate: number) => void) | null = null;
+let selectedPlaybackRate = 1;
 const SAMPLE_RATE = 44_100;
 const START_BUFFER_FRAMES = SAMPLE_RATE / 10;
 const articleText = getArticleText();
@@ -47,6 +50,14 @@ if (articleText && !document.getElementById("readflow-controls")) {
 
   controls.debugButton.addEventListener("click", () => {
     void chrome.runtime.sendMessage({ type: "open_diagnostics" });
+  });
+
+  controls.speedButton.addEventListener("click", () => {
+    selectedPlaybackRate = nextPlaybackRate(selectedPlaybackRate);
+    controls.speedButton.textContent = `${selectedPlaybackRate}×`;
+    controls.speedButton.title = `Playback speed: ${selectedPlaybackRate} times`;
+    controls.speedButton.setAttribute("aria-label", `Playback speed ${selectedPlaybackRate} times. Change speed`);
+    setCurrentPlaybackSpeed?.(selectedPlaybackRate);
   });
 
   controls.selectionButton.addEventListener("pointerdown", (event) => {
@@ -223,6 +234,7 @@ function createControls(): {
   host: HTMLDivElement;
   articleButton: HTMLButtonElement;
   debugButton: HTMLButtonElement;
+  speedButton: HTMLButtonElement;
   selectionButton: HTMLButtonElement;
   playerControls: HTMLDivElement;
   rewindButton: HTMLButtonElement;
@@ -238,8 +250,8 @@ function createControls(): {
     <style>
       :host {
         all: initial;
-        color: #f7f7f8;
-        font: 500 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #edf0ed;
+        font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
 
       .readflow-layer {
@@ -250,20 +262,27 @@ function createControls(): {
       }
 
       button {
-        background: #202124;
-        border: 1px solid #45464a;
-        border-radius: 999px;
-        box-shadow: 0 4px 16px rgb(0 0 0 / 22%);
+        appearance: none;
+        background: linear-gradient(180deg, #485055, #30383d);
+        border: 1px solid #626c70;
+        border-bottom-color: #1c2225;
+        border-radius: 9px;
+        box-shadow: inset 0 1px rgb(255 255 255 / 12%), 0 2px 3px rgb(0 0 0 / 28%);
         color: inherit;
         cursor: pointer;
         font: inherit;
-        min-height: 40px;
-        padding: 0 16px;
+        min-height: 38px;
+        padding: 0 12px;
         pointer-events: auto;
+        transition: background 150ms ease, transform 150ms ease;
       }
 
       button:hover {
-        background: #303136;
+        background: linear-gradient(180deg, #596267, #3b454a);
+      }
+
+      button:active:not(:disabled) {
+        transform: translateY(1px);
       }
 
       button:disabled {
@@ -272,52 +291,256 @@ function createControls(): {
       }
 
       button:focus-visible {
-        outline: 2px solid #9bbcff;
+        outline: 2px solid #d4e888;
         outline-offset: 3px;
       }
 
-      #article-button {
-        bottom: 24px;
+      #dock {
+        background: linear-gradient(145deg, #4b5558, #283135 25%, #1c2428 72%);
+        border: 1px solid #667175;
+        border-bottom-color: #111719;
+        border-radius: 18px;
+        bottom: max(16px, env(safe-area-inset-bottom));
+        box-shadow: 0 18px 44px rgb(0 0 0 / 32%), inset 0 1px rgb(255 255 255 / 16%);
+        box-sizing: border-box;
+        padding: 13px;
+        pointer-events: auto;
         position: fixed;
-        right: 24px;
+        right: 16px;
+        width: min(300px, calc(100vw - 32px));
+      }
+
+      #dock-header {
+        align-items: center;
+        display: flex;
+        justify-content: space-between;
+        margin: 0 2px 10px;
+      }
+
+      #header-actions {
+        align-items: center;
+        display: flex;
+        gap: 7px;
+      }
+
+      #brand {
+        color: #e9eeeb;
+        font: 800 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0.19em;
+      }
+
+      #brand::before {
+        background: #d6e986;
+        border-radius: 50%;
+        box-shadow: 0 0 9px rgb(214 233 134 / 45%);
+        content: "";
+        display: inline-block;
+        height: 7px;
+        margin-right: 9px;
+        vertical-align: 1px;
+        width: 7px;
       }
 
       #debug-button {
-        bottom: 24px;
-        position: fixed;
-        right: 184px;
+        background: transparent;
+        border: 0;
+        box-shadow: none;
+        color: #b9c4c3;
+        font-size: 11px;
+        min-height: 24px;
+        padding: 0 2px;
+      }
+
+      #debug-button:hover {
+        background: transparent;
+        color: #eff5ef;
+      }
+
+      #speed-button {
+        background: #20292c;
+        border: 1px solid #667471;
+        border-radius: 6px;
+        color: #dce9ac;
+        font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        min-height: 26px;
+        min-width: 43px;
+        padding: 0 6px;
+      }
+
+      #speed-button:hover {
+        background: #354144;
+      }
+
+      #cassette-window {
+        align-items: center;
+        background: linear-gradient(180deg, #12191c, #252e30);
+        border: 1px solid #0c1315;
+        border-radius: 9px;
+        box-shadow: inset 0 5px 13px rgb(0 0 0 / 65%), 0 1px rgb(255 255 255 / 9%);
+        display: flex;
+        height: 58px;
+        justify-content: space-between;
+        margin-bottom: 10px;
+        overflow: hidden;
+        padding: 0 15px;
+        position: relative;
+      }
+
+      #cassette-window::before {
+        background: #736a4a;
+        content: "";
+        height: 2px;
+        left: 52px;
+        opacity: 0.65;
+        position: absolute;
+        right: 52px;
+        top: 28px;
+      }
+
+      .reel {
+        background: #222a2a;
+        border: 5px solid #89928d;
+        border-radius: 50%;
+        box-shadow: 0 0 0 2px #111719, inset 0 0 0 3px #111719;
+        box-sizing: border-box;
+        height: 44px;
+        position: relative;
+        width: 44px;
+      }
+
+      .reel::before {
+        background: repeating-conic-gradient(#bec8bc 0deg 14deg, #36423f 14deg 60deg);
+        border-radius: 50%;
+        content: "";
+        inset: 6px;
+        position: absolute;
+      }
+
+      .reel::after {
+        background: #1c2627;
+        border: 2px solid #a4afa6;
+        border-radius: 50%;
+        content: "";
+        height: 7px;
+        left: 50%;
+        position: absolute;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 7px;
+      }
+
+      #tape-label {
+        color: #c1c9bb;
+        font: 700 9px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0.12em;
+        position: relative;
+        text-align: center;
+        text-shadow: 0 1px #101515;
+      }
+
+      #tape-label span {
+        color: #8e9d90;
+        display: block;
+        font-size: 8px;
+        letter-spacing: 0.03em;
+        max-width: 130px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       #selection-button {
+        background: linear-gradient(180deg, #434d4f, #20292c);
+        border: 1px solid #77827f;
+        border-radius: 10px;
+        box-shadow: inset 0 1px rgb(255 255 255 / 18%), 0 8px 24px rgb(0 0 0 / 30%);
+        color: #f3f5ef;
         position: fixed;
         transform: translateX(-50%);
+        white-space: nowrap;
+      }
+
+      #selection-button::before,
+      #article-button::before {
+        content: "▶";
+        font-size: 11px;
+        margin-right: 9px;
+      }
+
+      #selection-button::before {
+        color: #dce9ac;
       }
 
       #status {
-        background: #202124;
-        border: 1px solid #45464a;
-        border-radius: 10px;
-        bottom: 122px;
-        box-shadow: 0 4px 16px rgb(0 0 0 / 22%);
-        color: #f7f7f8;
-        max-width: min(320px, calc(100vw - 32px));
-        padding: 10px 14px;
-        pointer-events: auto;
-        position: fixed;
-        right: 24px;
+        background: linear-gradient(180deg, #c6d4af, #aebf99);
+        border: 1px solid #111a14;
+        border-radius: 7px;
+        box-shadow: inset 0 2px 5px rgb(32 45 30 / 23%);
+        color: #253627;
+        font: 700 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+        min-height: 17px;
+        overflow: hidden;
+        padding: 10px 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       #player-controls {
-        bottom: 76px;
-        display: flex;
-        gap: 8px;
-        position: fixed;
-        right: 24px;
+        display: grid;
+        gap: 6px;
+        grid-template-columns: 1fr 1.25fr 1fr 1fr;
+        margin-top: 10px;
       }
 
       #player-controls button {
-        min-height: 36px;
-        padding: 0 12px;
+        min-width: 0;
+        padding: 0 4px;
+      }
+
+      #stop-button::before {
+        background: #d98879;
+        border-radius: 2px;
+        content: "";
+        display: inline-block;
+        height: 8px;
+        margin-right: 5px;
+        width: 8px;
+      }
+
+      #pause-button {
+        background: linear-gradient(180deg, #dce9ac, #abbf78);
+        border-color: #d8e6a5;
+        border-bottom-color: #6a7e46;
+        color: #263324;
+      }
+
+      #pause-button:hover {
+        background: linear-gradient(180deg, #eaf5bf, #bed38b);
+      }
+
+      #article-button {
+        background: linear-gradient(180deg, #dce9ac, #afc37e);
+        border-color: #e0edb1;
+        border-bottom-color: #6a7e46;
+        color: #243323;
+        font-weight: 750;
+        margin-top: 10px;
+        width: 100%;
+      }
+
+      #article-button:hover {
+        background: linear-gradient(180deg, #eaf5bf, #c3d690);
+      }
+
+      @media (max-width: 540px) {
+        #dock {
+          right: 50%;
+          transform: translateX(50%);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        button { transition: none; }
       }
 
       [hidden] {
@@ -325,23 +548,39 @@ function createControls(): {
       }
     </style>
     <div class="readflow-layer">
-      <button id="article-button" type="button">Listen to article</button>
-      <button id="debug-button" type="button" title="Open Readflow diagnostics">Debug</button>
-      <button id="selection-button" type="button" hidden>Listen</button>
-      <div id="status" role="status" aria-live="polite" hidden></div>
-      <div id="player-controls" hidden>
-        <button id="rewind-button" type="button" aria-label="Back 15 seconds" title="Back 15 seconds">−15</button>
-        <button id="pause-button" type="button">Pause</button>
-        <button id="forward-button" type="button" aria-label="Forward 15 seconds" title="Forward 15 seconds">+15</button>
-        <button id="stop-button" type="button">Stop</button>
+      <button id="selection-button" type="button" hidden>Listen to selection</button>
+      <div id="dock" role="group" aria-label="Readflow player">
+        <div id="dock-header">
+          <span id="brand">READFLOW</span>
+          <div id="header-actions">
+            <button id="speed-button" type="button" title="Playback speed: 1 time" aria-label="Playback speed 1 time. Change speed">1×</button>
+            <button id="debug-button" type="button" title="Open Readflow diagnostics">Debug</button>
+          </div>
+        </div>
+        <div id="cassette-window" aria-hidden="true">
+          <span class="reel"></span>
+          <span id="tape-label">SIDE A<span id="tape-site"></span></span>
+          <span class="reel"></span>
+        </div>
+        <div id="status" role="status" aria-live="polite">Ready to listen</div>
+        <div id="player-controls" hidden>
+          <button id="rewind-button" type="button" aria-label="Back 15 seconds" title="Back 15 seconds">−15</button>
+          <button id="pause-button" type="button">Pause</button>
+          <button id="forward-button" type="button" aria-label="Forward 15 seconds" title="Forward 15 seconds">+15</button>
+          <button id="stop-button" type="button">Stop</button>
+        </div>
+        <button id="article-button" type="button">Listen to article</button>
       </div>
     </div>
   `;
+
+  shadow.querySelector<HTMLElement>("#tape-site")!.textContent = window.location.hostname.replace(/^www\./, "") || "LOCAL PAGE";
 
   return {
     host,
     articleButton: shadow.querySelector<HTMLButtonElement>("#article-button")!,
     debugButton: shadow.querySelector<HTMLButtonElement>("#debug-button")!,
+    speedButton: shadow.querySelector<HTMLButtonElement>("#speed-button")!,
     selectionButton: shadow.querySelector<HTMLButtonElement>("#selection-button")!,
     playerControls: shadow.querySelector<HTMLDivElement>("#player-controls")!,
     rewindButton: shadow.querySelector<HTMLButtonElement>("#rewind-button")!,
@@ -368,9 +607,10 @@ function positionSelectionButton(button: HTMLButtonElement): void {
   }
 
   const horizontalCenter = rect.left + rect.width / 2;
-  const boundedCenter = Math.max(56, Math.min(window.innerWidth - 56, horizontalCenter));
+  const boundedCenter = Math.max(92, Math.min(window.innerWidth - 92, horizontalCenter));
+  const verticalPosition = rect.top >= 48 ? rect.top - 48 : rect.bottom + 10;
   button.style.left = `${boundedCenter}px`;
-  button.style.top = `${Math.max(8, rect.top - 48)}px`;
+  button.style.top = `${Math.max(8, Math.min(window.innerHeight - 48, verticalPosition))}px`;
   button.hidden = false;
 }
 
@@ -412,6 +652,8 @@ async function startPlayback(
   let receivedFrames = 0;
   let seekStartFrame = 0;
   let pendingSeekFrame: number | null = null;
+  let playbackRate = selectedPlaybackRate;
+  const bufferFrames = (): number => bufferFramesForSpeed(START_BUFFER_FRAMES, playbackRate);
   let nextStart = 0;
   let streamFinished = false;
   let playbackComplete = false;
@@ -441,6 +683,7 @@ async function startPlayback(
     }
 
     stopped = true;
+    setCurrentPlaybackSpeed = null;
     cancelAnimationFrame(animationFrame);
     highlighter?.clear();
     if (recordStop && !playbackComplete) {
@@ -522,11 +765,12 @@ async function startPlayback(
 
     const audioSource = context.createBufferSource();
     audioSource.buffer = timelineEntry.buffer;
+    audioSource.playbackRate.value = playbackRate;
     audioSource.connect(context.destination);
 
     const schedulingLead = nextStart === 0 ? 0.05 : 0.01;
     const start = Math.max(context.currentTime + schedulingLead, nextStart);
-    const end = start + frameCount / SAMPLE_RATE;
+    const end = start + playbackDuration(frameCount, SAMPLE_RATE, playbackRate);
     scheduledRanges.push({
       start,
       end,
@@ -555,7 +799,7 @@ async function startPlayback(
     audioTimeline.push(timelineEntry);
     receivedFrames += samples.length;
     if (pendingSeekFrame !== null) {
-      const seek = resolveSeekTarget(pendingSeekFrame, receivedFrames, streamFinished, START_BUFFER_FRAMES);
+      const seek = resolveSeekTarget(pendingSeekFrame, receivedFrames, streamFinished, bufferFrames());
       if (seek.waiting) {
         return;
       }
@@ -568,7 +812,7 @@ async function startPlayback(
   };
 
   const flushSamples = (force: boolean): void => {
-    if (!force && pendingFrameCount < START_BUFFER_FRAMES) {
+    if (!force && pendingFrameCount < bufferFrames()) {
       return;
     }
 
@@ -610,19 +854,21 @@ async function startPlayback(
         break;
       }
       if (outputContextTime < range.end) {
-        frame = range.firstFrame + (outputContextTime - range.start) * SAMPLE_RATE;
+        frame = range.firstFrame + playedFrames(outputContextTime - range.start, SAMPLE_RATE, playbackRate);
         break;
       }
-      frame = range.firstFrame + (range.end - range.start) * SAMPLE_RATE;
+      frame = range.firstFrame + playedFrames(range.end - range.start, SAMPLE_RATE, playbackRate);
     }
     return Math.min(receivedFrames, Math.max(0, frame));
   };
 
-  const seekTo = (requestedFrame: number): void => {
+  const seekTo = (requestedFrame: number, recordSeek = true): void => {
     const { targetFrame, waiting } = resolveSeekTarget(
-      requestedFrame, receivedFrames, streamFinished, START_BUFFER_FRAMES,
+      requestedFrame, receivedFrames, streamFinished, bufferFrames(),
     );
-    recordClientEvent("seek", targetFrame / SAMPLE_RATE * 1000);
+    if (recordSeek) {
+      recordClientEvent("seek", targetFrame / SAMPLE_RATE * 1000);
+    }
     for (const audioSource of sources) {
       audioSource.onended = null;
       audioSource.stop();
@@ -654,6 +900,15 @@ async function startPlayback(
 
   const seekBy = (seconds: number): void => {
     seekTo((pendingSeekFrame ?? getAudibleFrame()) + seconds * SAMPLE_RATE);
+  };
+
+  setCurrentPlaybackSpeed = (rate) => {
+    const frame = pendingSeekFrame ?? getAudibleFrame();
+    playbackRate = rate;
+    recordClientEvent("speed_changed", frame / SAMPLE_RATE * 1000, { rate });
+    if (!playbackComplete) {
+      seekTo(frame, false);
+    }
   };
 
   const rebuildWordRanges = (): void => {
