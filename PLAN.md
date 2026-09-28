@@ -30,7 +30,7 @@ The floating player stays within the current tab; navigation starts a new sessio
 | Article detection | Mozilla Readability on a cloned document, plus live DOM paragraph matching | Good main-content extraction while retaining links to visible text for highlighting. |
 | Highlight | CSS Highlight API and DOM `Range` | Highlights words without inserting spans into an article. |
 | Audio | HTMLAudioElement with MediaSource | Streams compressed audio into a normal seekable player. |
-| Local TTS bridge | Python 3.12+, FastAPI, Uvicorn, HTTPX, python-dotenv | Reads `API_KEY` from `.env` and relays Fish Audio's stream without bundling the key. |
+| Local TTS bridge | Python 3.12+ managed with uv, FastAPI, Uvicorn, HTTPX, python-dotenv | Uses uv to lock bridge dependencies; reads `API_KEY` from `.env` and relays Fish Audio's stream without bundling the key. |
 | TTS | Fish Audio `s2.1-pro-free` timestamp stream | Supplies audio and alignment data together. |
 
 No account system or database is needed for the local MVP.
