@@ -67,6 +67,7 @@ Keep the local bridge running while listening.
 On an article page, choose **Listen to article** to read the article.
 Select text and choose **Listen** to read only that selection.
 Use **Back 15 seconds**, **Pause**, **Forward 15 seconds**, or **Stop** in the small player while audio is playing.
+If **Forward 15 seconds** reaches audio that has not arrived yet, playback waits at that target until enough audio is buffered.
 Each Listen action sends the full text once to the local bridge, which feeds Fish text fragments of up to 100 characters in one streaming session.
 That is usually around 15 to 20 English words per fragment, but the word count varies.
 Readflow converts inline ordinal math such as `$n^\text{th}$` to “nth” before sending it to Fish.
