@@ -63,7 +63,10 @@ function createControls(): {
   host: HTMLDivElement;
   articleButton: HTMLButtonElement;
   selectionButton: HTMLButtonElement;
+  playerControls: HTMLDivElement;
+  rewindButton: HTMLButtonElement;
   pauseButton: HTMLButtonElement;
+  forwardButton: HTMLButtonElement;
   stopButton: HTMLButtonElement;
   status: HTMLDivElement;
 } {
@@ -100,6 +103,11 @@ function createControls(): {
 
       button:hover {
         background: #303136;
+      }
+
+      button:disabled {
+        cursor: default;
+        opacity: 0.5;
       }
 
       button:focus-visible {
@@ -142,6 +150,7 @@ function createControls(): {
 
       #player-controls button {
         min-height: 36px;
+        padding: 0 12px;
       }
 
       [hidden] {
@@ -153,7 +162,9 @@ function createControls(): {
       <button id="selection-button" type="button" hidden>Listen</button>
       <div id="status" role="status" aria-live="polite" hidden></div>
       <div id="player-controls" hidden>
+        <button id="rewind-button" type="button" aria-label="Back 15 seconds" title="Back 15 seconds">−15</button>
         <button id="pause-button" type="button">Pause</button>
+        <button id="forward-button" type="button" aria-label="Forward 15 seconds" title="Forward 15 seconds">+15</button>
         <button id="stop-button" type="button">Stop</button>
       </div>
     </div>
@@ -163,7 +174,10 @@ function createControls(): {
     host,
     articleButton: shadow.querySelector<HTMLButtonElement>("#article-button")!,
     selectionButton: shadow.querySelector<HTMLButtonElement>("#selection-button")!,
+    playerControls: shadow.querySelector<HTMLDivElement>("#player-controls")!,
+    rewindButton: shadow.querySelector<HTMLButtonElement>("#rewind-button")!,
     pauseButton: shadow.querySelector<HTMLButtonElement>("#pause-button")!,
+    forwardButton: shadow.querySelector<HTMLButtonElement>("#forward-button")!,
     stopButton: shadow.querySelector<HTMLButtonElement>("#stop-button")!,
     status: shadow.querySelector<HTMLDivElement>("#status")!,
   };
@@ -211,12 +225,15 @@ async function startPlayback(
   const port = chrome.runtime.connect({ name: "readflow-tts" });
   const sources = new Set<AudioBufferSourceNode>();
   const scheduledRanges: Array<{ start: number; end: number; firstFrame: number }> = [];
+  const audioTimeline: Array<{ buffer: AudioBuffer; firstFrame: number }> = [];
   const pendingSamples: Float32Array<ArrayBuffer>[] = [];
   let pendingFrameCount = 0;
   let pendingByte = new Uint8Array();
-  let submittedFrames = 0;
+  let receivedFrames = 0;
+  let seekStartFrame = 0;
   let nextStart = 0;
   let streamFinished = false;
+  let playbackComplete = false;
   let stopped = false;
   let animationFrame = 0;
 
@@ -235,13 +252,21 @@ async function startPlayback(
   };
 
   stopCurrentPlayback = cleanup;
-  controls.pauseButton.hidden = false;
-  controls.stopButton.hidden = false;
+  controls.playerControls.hidden = false;
+  controls.rewindButton.disabled = true;
+  controls.forwardButton.disabled = true;
   controls.pauseButton.textContent = "Pause";
   controls.pauseButton.onclick = () => {
+    if (playbackComplete) {
+      playbackComplete = false;
+      controls.pauseButton.textContent = "Pause";
+      seekTo(0);
+      return;
+    }
+
     if (context.state === "running") {
       void context.suspend().then(() => {
-        controls.pauseButton.textContent = "Resume";
+        controls.pauseButton.textContent = "Play";
       });
     } else {
       void context.resume().then(() => {
@@ -249,11 +274,12 @@ async function startPlayback(
       });
     }
   };
+  controls.rewindButton.onclick = () => seekBy(-15);
+  controls.forwardButton.onclick = () => seekBy(15);
   controls.stopButton.onclick = () => {
     cleanup();
     controls.status.textContent = "Stopped";
-    controls.pauseButton.hidden = true;
-    controls.stopButton.hidden = true;
+    controls.playerControls.hidden = true;
     if (stopCurrentPlayback === cleanup) {
       stopCurrentPlayback = null;
     }
@@ -262,8 +288,7 @@ async function startPlayback(
   const reportError = (message: string): void => {
     cleanup();
     controls.status.textContent = message;
-    controls.pauseButton.hidden = true;
-    controls.stopButton.hidden = true;
+    controls.playerControls.hidden = true;
     if (stopCurrentPlayback === cleanup) {
       stopCurrentPlayback = null;
     }
@@ -271,32 +296,50 @@ async function startPlayback(
 
   const finishIfReady = (): void => {
     if (streamFinished && sources.size === 0 && pendingFrameCount === 0 && !stopped) {
+      playbackComplete = true;
       controls.status.textContent = "Finished";
-      controls.pauseButton.hidden = true;
-      controls.stopButton.hidden = true;
+      controls.pauseButton.textContent = "Play";
       cancelAnimationFrame(animationFrame);
     }
   };
 
-  const scheduleSamples = (samples: Float32Array<ArrayBuffer>): void => {
-    const buffer = context.createBuffer(1, samples.length, SAMPLE_RATE);
-    buffer.copyToChannel(samples, 0);
+  const scheduleBuffer = (
+    timelineEntry: { buffer: AudioBuffer; firstFrame: number },
+    offsetFrames: number,
+  ): void => {
+    const frameCount = timelineEntry.buffer.length - offsetFrames;
+    if (frameCount <= 0) {
+      return;
+    }
+
     const audioSource = context.createBufferSource();
-    audioSource.buffer = buffer;
+    audioSource.buffer = timelineEntry.buffer;
     audioSource.connect(context.destination);
 
     const schedulingLead = nextStart === 0 ? 0.05 : 0.01;
     const start = Math.max(context.currentTime + schedulingLead, nextStart);
-    const end = start + buffer.duration;
-    scheduledRanges.push({ start, end, firstFrame: submittedFrames });
-    submittedFrames += samples.length;
+    const end = start + frameCount / SAMPLE_RATE;
+    scheduledRanges.push({
+      start,
+      end,
+      firstFrame: timelineEntry.firstFrame + offsetFrames,
+    });
     nextStart = end;
     sources.add(audioSource);
     audioSource.onended = () => {
       sources.delete(audioSource);
       finishIfReady();
     };
-    audioSource.start(start);
+    audioSource.start(start, offsetFrames / SAMPLE_RATE);
+  };
+
+  const scheduleSamples = (samples: Float32Array<ArrayBuffer>): void => {
+    const buffer = context.createBuffer(1, samples.length, SAMPLE_RATE);
+    buffer.copyToChannel(samples, 0);
+    const timelineEntry = { buffer, firstFrame: receivedFrames };
+    audioTimeline.push(timelineEntry);
+    receivedFrames += samples.length;
+    scheduleBuffer(timelineEntry, 0);
   };
 
   const flushSamples = (force: boolean): void => {
@@ -334,18 +377,9 @@ async function startPlayback(
     flushSamples(false);
   };
 
-  const updatePlaybackTime = (): void => {
-    if (stopped || streamFinished && sources.size === 0) {
-      return;
-    }
-
-    if (scheduledRanges.length === 0) {
-      animationFrame = requestAnimationFrame(updatePlaybackTime);
-      return;
-    }
-
+  const getAudibleFrame = (): number => {
     const outputContextTime = context.getOutputTimestamp().contextTime ?? context.currentTime;
-    let frame = 0;
+    let frame = scheduledRanges[0]?.firstFrame ?? seekStartFrame;
     for (const range of scheduledRanges) {
       if (outputContextTime < range.start) {
         break;
@@ -356,6 +390,53 @@ async function startPlayback(
       }
       frame = range.firstFrame + (range.end - range.start) * SAMPLE_RATE;
     }
+    return Math.min(receivedFrames, Math.max(0, frame));
+  };
+
+  const seekTo = (requestedFrame: number): void => {
+    const targetFrame = Math.floor(Math.min(receivedFrames, Math.max(0, requestedFrame)));
+    for (const audioSource of sources) {
+      audioSource.onended = null;
+      audioSource.stop();
+    }
+    sources.clear();
+    scheduledRanges.length = 0;
+    seekStartFrame = targetFrame;
+    nextStart = 0;
+    playbackComplete = false;
+    controls.pauseButton.textContent = context.state === "running" ? "Pause" : "Play";
+
+    for (const timelineEntry of audioTimeline) {
+      const offsetFrames = Math.max(0, targetFrame - timelineEntry.firstFrame);
+      scheduleBuffer(timelineEntry, offsetFrames);
+    }
+
+    controls.rewindButton.disabled = receivedFrames === 0 || targetFrame === 0;
+    controls.forwardButton.disabled = receivedFrames === 0 || targetFrame === receivedFrames;
+    cancelAnimationFrame(animationFrame);
+    animationFrame = requestAnimationFrame(updatePlaybackTime);
+    if (streamFinished && sources.size === 0) {
+      finishIfReady();
+    }
+  };
+
+  const seekBy = (seconds: number): void => {
+    seekTo(getAudibleFrame() + seconds * SAMPLE_RATE);
+  };
+
+  const updatePlaybackTime = (): void => {
+    if (stopped || streamFinished && sources.size === 0) {
+      return;
+    }
+
+    if (scheduledRanges.length === 0) {
+      animationFrame = requestAnimationFrame(updatePlaybackTime);
+      return;
+    }
+
+    const frame = getAudibleFrame();
+    controls.rewindButton.disabled = frame <= 0;
+    controls.forwardButton.disabled = frame >= receivedFrames;
     const seconds = Math.max(0, frame / SAMPLE_RATE);
     const state = context.state === "suspended" ? "Paused" : "Playing";
     controls.status.textContent = `${state} · ${formatTime(seconds)}`;
@@ -363,6 +444,10 @@ async function startPlayback(
   };
 
   port.onMessage.addListener((message: { event?: string; audio_base64?: string; message?: string }) => {
+    if (stopped) {
+      return;
+    }
+
     if (message.event === "audio" && message.audio_base64) {
       try {
         queueAudio(message.audio_base64);
@@ -376,7 +461,7 @@ async function startPlayback(
       }
       streamFinished = true;
       flushSamples(true);
-      if (submittedFrames === 0) {
+      if (receivedFrames === 0) {
         reportError("Fish Audio returned no audio.");
         return;
       }
