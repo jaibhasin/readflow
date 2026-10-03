@@ -6,17 +6,54 @@ import {
   type TraceSession,
 } from "./diagnostics-store";
 import type { TextSection } from "./text-sections";
+import { DEFAULT_VOICE, isFishVoice, type VoicePage } from "./voices";
 
 type StreamEvent = {
   event: "connected" | "audio" | "finish" | "error";
   [key: string]: unknown;
 };
 
-chrome.runtime.onMessage.addListener((message: { type?: string }) => {
+chrome.runtime.onMessage.addListener((message: { type?: string; query?: string; page?: number; voice?: unknown; favorite?: boolean }, _sender, sendResponse) => {
   if (message.type === "open_diagnostics") {
     void chrome.tabs.create({ url: chrome.runtime.getURL("extension/diagnostics.html") });
+  } else if (message.type === "list_voices") {
+    const query = new URLSearchParams({
+      query: (message.query || "").slice(0, 100),
+      page: String(Math.max(1, Math.floor(Number(message.page) || 1))),
+    });
+    void fetch(`http://127.0.0.1:4179/v1/voices?${query}`, { signal: AbortSignal.timeout(15_000) })
+      .then(async (response) => {
+        const data = await response.json() as VoicePage & { detail?: string };
+        if (!response.ok) throw new Error(data.detail || "Could not load Fish Audio voices.");
+        if (!Array.isArray(data.voices) || !data.voices.every(isFishVoice)) throw new Error("The voice library returned an invalid response.");
+        sendResponse(data);
+      }).catch((error: unknown) => sendResponse({ error: error instanceof Error ? error.message : "Start the Readflow bridge to browse voices." }));
+    return true;
+  } else if (message.type === "voice_settings") {
+    void chrome.storage.local.get(["selectedVoice", "favoriteVoices"]).then((settings) => sendResponse({
+      selected: isFishVoice(settings.selectedVoice) ? settings.selectedVoice : DEFAULT_VOICE,
+      favorites: Array.isArray(settings.favoriteVoices) ? settings.favoriteVoices.filter(isFishVoice) : [DEFAULT_VOICE],
+    })).catch(() => sendResponse({ selected: DEFAULT_VOICE, favorites: [DEFAULT_VOICE] }));
+    return true;
+  } else if (message.type === "select_voice" && isFishVoice(message.voice)) {
+    void chrome.storage.local.set({ selectedVoice: message.voice }).then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ error: "Could not save your voice. Try again." }));
+    return true;
+  } else if (message.type === "favorite_voice" && isFishVoice(message.voice)) {
+    const voice = message.voice;
+    voiceSettingsQueue = voiceSettingsQueue.catch(() => undefined).then(async () => {
+      const settings = await chrome.storage.local.get("favoriteVoices");
+      const favorites = (Array.isArray(settings.favoriteVoices) ? settings.favoriteVoices.filter(isFishVoice) : [DEFAULT_VOICE])
+        .filter((item) => item.id !== voice.id);
+      if (message.favorite) favorites.push(voice);
+      await chrome.storage.local.set({ favoriteVoices: favorites });
+      sendResponse({ ok: true });
+    }).catch(() => sendResponse({ error: "Could not save your favorites. Try again." }));
+    return true;
   }
 });
+
+let voiceSettingsQueue = Promise.resolve();
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "readflow-tts") {

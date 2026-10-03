@@ -7,10 +7,13 @@ import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Annotated
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 import msgpack
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from websockets.asyncio.client import ClientConnection, connect
@@ -166,6 +169,45 @@ def create_app(api_key: str | None = None) -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/v1/voices")
+    async def list_voices(
+        query: Annotated[str, Query(max_length=100)] = "",
+        page: Annotated[int, Query(ge=1, le=1000)] = 1,
+    ) -> dict[str, object]:
+        if not api_key:
+            raise HTTPException(503, "Set FISH_API_KEY in .env, then restart the bridge.")
+
+        def fetch_voices() -> dict[str, object]:
+            params: dict[str, str | int] = {"page_size": 20, "page_number": page, "sort_by": "score"}
+            if query.strip():
+                params["title"] = query.strip()
+            request = Request(
+                f"https://api.fish.audio/model?{urlencode(params)}",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            try:
+                with urlopen(request, timeout=10) as response:
+                    data = json.load(response)
+            except HTTPError as error:
+                detail = "Fish Audio rejected the API key. Check FISH_API_KEY and restart the bridge." if error.code in (401, 403) else "Fish Audio could not load the voice library. Try again."
+                raise HTTPException(502, detail) from error
+            except (URLError, TimeoutError, ValueError) as error:
+                raise HTTPException(502, "Could not reach Fish Audio's voice library. Try again.") from error
+            if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+                raise HTTPException(502, "Fish Audio returned an invalid voice library.")
+            voices = [
+                {"id": item["_id"], "name": str(item["title"])[:200], "languages": item.get("languages") or []}
+                for item in data["items"]
+                if isinstance(item, dict) and item.get("_id") and item.get("title")
+                and item.get("type") == "tts" and not item.get("dmca_taken_down")
+            ]
+            has_more = data.get("has_more")
+            if has_more is None:
+                has_more = page * 20 < data.get("total", 0)
+            return {"voices": voices, "hasMore": bool(has_more)}
+
+        return await asyncio.to_thread(fetch_voices)
 
     @app.post("/v1/tts/stream/with-timestamp")
     async def stream_tts(payload: TTSRequest) -> StreamingResponse:
