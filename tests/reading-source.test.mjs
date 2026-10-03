@@ -75,3 +75,24 @@ test("non-article pages and empty selections have no reading source", () => {
   selection.collapse(true);
   assert.equal(createSelectionSource(selection), null);
 });
+
+test("source IDs survive Readability rebuilding a short article during retries", () => {
+  const paragraph = ("Keep going. " + "The reader follows a detailed explanation of source locations and repeated text. ".repeat(4)).slice(0, 245);
+  const document = new JSDOM(`<article><p id='first'>${paragraph}</p><p id='second'>${paragraph}</p></article>`).window.document;
+  const source = createArticleSource(document);
+  assert.ok(source);
+  const second = source.text.indexOf("Keep going.", 1);
+  assert.ok(second > 0);
+  assert.equal(sourceRanges(source, second, second + 11)[0].startContainer, document.getElementById("second").firstChild);
+});
+
+test("hidden text inside a selected sentence receives no highlight range", () => {
+  const document = new JSDOM("<p>Keep <span aria-hidden='true'>Ignore this duplicate.</span><strong>going.</strong></p>").window.document;
+  const selection = document.createRange();
+  selection.selectNodeContents(document.querySelector("p"));
+  const source = createSelectionSource(selection);
+  const ranges = sourceRanges(source, 0, source.text.length);
+  assert.equal(source.text, "Keep going.");
+  assert.equal(ranges.map(range => range.toString()).join(""), "Keep going.");
+  assert.equal(ranges.length, 2);
+});
