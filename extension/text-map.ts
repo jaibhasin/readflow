@@ -24,6 +24,13 @@ export function sentenceSpans(text: string, blockStarts: number[] = [0]): Array<
   });
 }
 
+export function createTextMap(text: string, blockStarts: number[] = [0]) {
+  return {
+    text: text.split("").map(foldCharacter).join(""),
+    sentences: sentenceSpans(text, blockStarts),
+  };
+}
+
 export function locateWordOffsets(
   pageText: string,
   words: string[],
