@@ -26,7 +26,7 @@ chrome.runtime.onMessage.addListener((message: { type?: string; query?: string; 
         const data = await response.json() as VoicePage & { detail?: string };
         if (!response.ok) throw new Error(data.detail || "Could not load Fish Audio voices.");
         if (!Array.isArray(data.voices) || !data.voices.every(isFishVoice)) throw new Error("The voice library returned an invalid response.");
-        sendResponse(data);
+        sendResponse({ ...data, voices: data.voices.filter((voice) => voice.languages.some((language) => language.toLowerCase().split("-")[0] === "en")) });
       }).catch((error: unknown) => sendResponse({ error: error instanceof Error ? error.message : "Start the Readflow bridge to browse voices." }));
     return true;
   } else if (message.type === "voice_settings") {

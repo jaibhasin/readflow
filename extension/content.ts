@@ -12,6 +12,7 @@ import type { FishVoice } from "./voices";
 
 let stopCurrentPlayback: (() => void) | null = null;
 let setCurrentPlaybackSpeed: ((rate: number) => void) | null = null;
+let changePlaybackVoice: ((voice: FishVoice) => void) | null = null;
 let selectedPlaybackRate = 1;
 const SAMPLE_RATE = 44_100;
 const START_BUFFER_SECONDS = 3;
@@ -101,7 +102,7 @@ type TransportState = "idle" | "connecting" | "buffering" | "playing" | "paused"
 if (initialArticleSource && !document.getElementById("readflow-controls")) {
   const controls = createControls();
   document.documentElement.append(controls.host);
-  const voicePicker = createVoicePicker(controls.host.shadowRoot!, controls.dock);
+  const voicePicker = createVoicePicker(controls.host.shadowRoot!, controls.dock, (voice) => changePlaybackVoice?.(voice));
   voicePickers.set(controls.host, voicePicker);
 
   controls.articleButton.addEventListener("click", () => {
@@ -204,6 +205,22 @@ function getSelectedText(): string | null {
   const text = window.getSelection()?.toString().trim();
 
   return text || null;
+}
+
+function sourceAfterOffset(source: ReadingSource, offset: number): ReadingSource {
+  const start = Math.max(0, Math.min(source.text.length, Math.floor(offset)));
+  return {
+    text: source.text.slice(start),
+    spans: source.spans.flatMap((span) => {
+      const first = Math.max(0, start - span.start);
+      if (first >= span.offsets.length) return [];
+      return [{ ...span, start: Math.max(0, span.start - start), offsets: span.offsets.slice(first) }];
+    }),
+    sentences: source.sentences.filter((sentence) => sentence.end > start).map((sentence) => ({
+      start: Math.max(0, sentence.start - start),
+      end: sentence.end - start,
+    })),
+  };
 }
 
 function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
@@ -992,13 +1009,16 @@ async function startPlayback(
   readingSource: ReadingSource,
   source: string,
   selectionRange?: Range,
+  options: { sourceOffset?: number; elapsedSeconds?: number; voice?: FishVoice; resumePaused?: boolean; startBufferSeconds?: number } = {},
 ): Promise<void> {
   const picker = voicePickers.get(controls.host);
   await picker?.ready;
-  const voice: FishVoice = picker?.selectedVoice ?? DEFAULT_VOICE;
+  const voice: FishVoice = options.voice ?? picker?.selectedVoice ?? DEFAULT_VOICE;
   stopCurrentPlayback?.();
   controls.playerControls.hidden = true;
-  const spoken = prepareSpokenSource(readingSource.text);
+  const playbackSource = options.sourceOffset ? sourceAfterOffset(readingSource, options.sourceOffset) : readingSource;
+  if (!playbackSource.text) return;
+  const spoken = prepareSpokenSource(playbackSource.text);
   const spokenText = spoken.text;
   controls.tapeTitle.textContent = source === "Selected text" ? "Selected passage" : shortTapeTitle(document.title);
   controls.tapeTitle.title = controls.tapeTitle.textContent;
@@ -1053,7 +1073,7 @@ async function startPlayback(
   let processingEntry = 0;
   let processingOffset = 0;
   const bufferFrames = (): number => bufferFramesForSpeed(SAMPLE_RATE / 10, playbackRate);
-  const startupBufferFrames = (): number => Math.ceil(START_BUFFER_SECONDS * SAMPLE_RATE * playbackRate);
+  const startupBufferFrames = (): number => Math.ceil((options.startBufferSeconds ?? START_BUFFER_SECONDS) * SAMPLE_RATE * playbackRate);
   let nextStart = 0;
   let streamFinished = false;
   let playbackComplete = false;
@@ -1064,6 +1084,8 @@ async function startPlayback(
   let lastBufferStatusAt = 0;
   const sessionId = crypto.randomUUID();
   const sessionStarted = performance.now();
+  const elapsedBeforeSession = options.elapsedSeconds ?? 0;
+  let changeVoiceForSession: (voice: FishVoice) => void;
 
   const recordClientEvent = (kind: string, playbackMs?: number, value?: unknown): void => {
     try {
@@ -1090,6 +1112,7 @@ async function startPlayback(
 
     stopped = true;
     setCurrentPlaybackSpeed = null;
+    if (changePlaybackVoice === changeVoiceForSession) changePlaybackVoice = null;
     cancelAnimationFrame(animationFrame);
     window.clearTimeout(processingTimer);
     highlighter?.clear();
@@ -1107,7 +1130,7 @@ async function startPlayback(
   controls.playerControls.hidden = false;
   controls.rewindButton.disabled = true;
   controls.forwardButton.disabled = true;
-  controls.pauseButton.textContent = "Pause";
+  controls.pauseButton.textContent = options.resumePaused ? "Play" : "Pause";
   controls.pauseButton.onclick = () => {
     if (playbackComplete) {
       playbackComplete = false;
@@ -1159,6 +1182,29 @@ async function startPlayback(
     }
   };
 
+  changeVoiceForSession = (nextVoice) => {
+    if (stopped) return;
+    const frame = pendingSeekFrame ?? getAudibleFrame();
+    const currentSeconds = frame / SAMPLE_RATE;
+    let sourceOffset = options.sourceOffset ?? 0;
+    for (const word of locatedWords) {
+      if (word.start > currentSeconds) break;
+      if (word.sourceOffset !== null) sourceOffset = (options.sourceOffset ?? 0) + word.sourceOffset;
+    }
+    const resumePaused = context.state === "suspended";
+    cleanup(false);
+    if (stopCurrentPlayback) stopCurrentPlayback = null;
+    setPlayerStatus(controls, `Switching to ${nextVoice.name}…`);
+    void startPlayback(controls, readingSource, source, selectionRange, {
+      sourceOffset,
+      elapsedSeconds: elapsedBeforeSession + currentSeconds,
+      voice: nextVoice,
+      resumePaused,
+      startBufferSeconds: 0.5,
+    });
+  };
+  changePlaybackVoice = changeVoiceForSession;
+
   port.onDisconnect.addListener(() => {
     const error = chrome.runtime?.lastError;
     if (!stopped && (!streamFinished || error)) reportError(RECONNECT_MESSAGE);
@@ -1167,6 +1213,7 @@ async function startPlayback(
   const finishIfReady = (): void => {
     if (streamFinished && stretchFinished && sources.size === 0 && pendingFrameCount === 0 && !stopped) {
       playbackComplete = true;
+      if (changePlaybackVoice === changeVoiceForSession) changePlaybackVoice = null;
       highlighter?.clear();
       currentSentenceKey = "";
       recordClientEvent("playback_finished", getAudibleFrame() / SAMPLE_RATE * 1000);
@@ -1399,7 +1446,7 @@ async function startPlayback(
         end: snapshot.offset + segment.end,
       })),
     ).sort((left, right) => left.start - right.start);
-    locatedWords = mapSentenceTimings(readingSource, spoken, segments);
+    locatedWords = mapSentenceTimings(playbackSource, spoken, segments);
     currentSentenceKey = "";
     const mappedWords = locatedWords.filter((word) => word.ranges.length);
     const mismatch = locatedWords.find((word) => !word.ranges.length);
@@ -1482,7 +1529,7 @@ async function startPlayback(
     controls.forwardButton.disabled = streamFinished && frame >= receivedFrames;
     const seconds = Math.max(0, frame / SAMPLE_RATE);
     const state = context.state === "suspended" ? "Paused" : hasAudibleAudio ? "Playing" : "Buffering";
-    setPlayerStatus(controls, `${state} · ${formatTime(seconds)}`);
+    setPlayerStatus(controls, `${state} · ${formatTime(elapsedBeforeSession + seconds)}`);
     animationFrame = requestAnimationFrame(updatePlaybackTime);
   };
 
@@ -1540,7 +1587,7 @@ async function startPlayback(
   });
 
   try {
-    await context.resume();
+    if (!options.resumePaused) await context.resume();
     port.postMessage({
       type: "start",
       sessionId,
@@ -1553,8 +1600,8 @@ async function startPlayback(
       wordCount: spokenText.trim().split(/\s+/).length,
       startedAt: new Date().toISOString(),
     });
-    setPlayerStatus(controls, "Buffering audio…");
-    setTransportState(controls, "buffering");
+    setPlayerStatus(controls, options.resumePaused ? `Paused · ${formatTime(elapsedBeforeSession)}` : "Buffering audio…");
+    setTransportState(controls, options.resumePaused ? "paused" : "buffering");
     animationFrame = requestAnimationFrame(updatePlaybackTime);
   } catch {
     reportError("Audio playback could not start. Try again.");
