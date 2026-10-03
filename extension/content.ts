@@ -3,7 +3,8 @@ import { mapReadingOffsets } from "./reading-progress";
 import { sentenceSpans } from "./text-map";
 import { mapSentenceTimings, type SentenceTiming } from "./highlight-timeline";
 import { createPageHighlighter, type PageSentenceHighlighter } from "./page-highlighter";
-import { createArticleSource, createSelectionSource, sliceReadingSource, type ReadingSource } from "./reading-source";
+import { createArticleSource, createSelectionSource, sliceReadingSource, sourceRanges, type ReadingSource } from "./reading-source";
+import { createReadingAutoScroller } from "./auto-scroll";
 import { bufferFramesForSpeed, isAudioAudible, playbackDuration, playedFrames } from "./playback-speed";
 import { StreamingTimeStretch } from "./time-stretch";
 import { resolveSeekTarget } from "./seek-target";
@@ -997,6 +998,7 @@ async function startPlayback(
     return;
   }
   const highlighter = createPageSentenceHighlighter();
+  const autoScroller = createReadingAutoScroller(window, controls.host);
   if (highlighter && selectionRange) {
     highlighter.set([], selectionRange);
     window.getSelection()?.removeAllRanges();
@@ -1084,6 +1086,7 @@ async function startPlayback(
     cancelAnimationFrame(animationFrame);
     window.clearTimeout(processingTimer);
     highlighter?.clear();
+    autoScroller.dispose();
     if (recordStop && !playbackComplete) {
       recordClientEvent("stopped", getAudibleFrame() / SAMPLE_RATE * 1000);
     }
@@ -1421,7 +1424,7 @@ async function startPlayback(
     }
   };
 
-  const updateSentenceHighlight = (playbackSeconds: number): void => {
+  const updateSentenceHighlight = (playbackSeconds: number, playing: boolean): void => {
     let word: (typeof locatedWords)[number] | undefined;
     for (const candidate of locatedWords) {
       if (candidate.start > playbackSeconds) {
@@ -1430,6 +1433,10 @@ async function startPlayback(
       word = candidate;
     }
 
+    if (playing && word?.ranges.length && word.sourceOffset !== null) {
+      const offset = word.sourceOffset;
+      autoScroller.follow(() => sourceRanges(readingSource, offset, offset + 1));
+    }
     if (!word || !highlighter) {
       highlighter?.set([], selectionRange);
       currentSentenceKey = "";
@@ -1486,7 +1493,7 @@ async function startPlayback(
       playbackStarted = true;
       recordClientEvent("playback_started", frame / SAMPLE_RATE * 1000);
     }
-    updateSentenceHighlight(frame / SAMPLE_RATE);
+    updateSentenceHighlight(frame / SAMPLE_RATE, hasAudibleAudio && context.state === "running");
     controls.rewindButton.disabled = frame <= 0;
     controls.forwardButton.disabled = streamFinished && frame >= receivedFrames;
     const seconds = Math.max(0, frame / SAMPLE_RATE);

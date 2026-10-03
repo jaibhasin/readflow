@@ -67,6 +67,9 @@ Keep the local bridge running while listening.
 On an article page, choose **Listen to article** to read the article.
 Select text and choose **Listen** to read only that selection.
 Use **Back 15 seconds**, **Pause**, **Forward 15 seconds**, or **Stop** in the small player while audio is playing.
+While audio plays, Readflow smoothly brings the spoken line into view only when it leaves a comfortable reading area, including inside scrollable article panels.
+Scrolling or interacting with the page gives you four seconds before automatic following resumes; dragging or selecting text holds it until you release.
+Automatic following rests while audio is paused or buffering and uses instant scrolling when your system requests reduced motion.
 The cassette label shows the article title and site, and its reels turn while audio is playing.
 Choose **−** to shrink the player to a compact view with status and play or pause, then **⌃** to expand it.
 The speed button cycles through 0.75×, 1×, 1.1×, 1.2×, 1.3×, 1.4×, 1.5×, 2×, and 3×.
