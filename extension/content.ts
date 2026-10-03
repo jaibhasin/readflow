@@ -37,7 +37,7 @@ type PageTextIndex = {
 };
 
 type PageSentenceHighlighter = {
-  set(range: Range | null): void;
+  set(range: Range | null, selectionRange?: Range): void;
   clear(): void;
 };
 
@@ -173,13 +173,20 @@ function createPageTextIndex(): PageTextIndex {
 }
 
 function findSourceStart(index: PageTextIndex, text: string, range?: Range): number {
-  if (range?.startContainer.nodeType === Node.TEXT_NODE) {
-    const node = range.startContainer as Text;
-    const span = index.spans.find((candidate) => candidate.node === node);
-    const localIndex = span?.offsets.findIndex((offset) => offset >= range.startOffset) ?? -1;
-    if (span && localIndex >= 0) {
-      return span.start + localIndex;
+  if (range) {
+    for (const span of index.spans) {
+      if (!range.intersectsNode(span.node)) {
+        continue;
+      }
+      const localIndex = span.offsets.findIndex((offset) =>
+        range.comparePoint(span.node, offset) === 0
+        && (span.node !== range.endContainer || offset < range.endOffset),
+      );
+      if (localIndex >= 0) {
+        return span.start + localIndex;
+      }
     }
+    return -1;
   }
 
   const normalizedSource = normalizeForSearch(text);
@@ -228,16 +235,30 @@ function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
 
   const name = "readflow-current-sentence";
   const highlight = new HighlightConstructor();
+  const selectedPassage = new HighlightConstructor();
+  const selectedSentence = new HighlightConstructor();
+  selectedSentence.priority = 1;
   registry.set(name, highlight);
+  registry.set("readflow-selected-passage", selectedPassage);
+  registry.set("readflow-selected-sentence", selectedSentence);
   pageSentenceHighlighter = {
-    set(range) {
+    set(range, selectionRange) {
       highlight.clear();
+      selectedSentence.clear();
+      if (!selectionRange) {
+        selectedPassage.clear();
+      } else if (!selectedPassage.has(selectionRange)) {
+        selectedPassage.clear();
+        selectedPassage.add(selectionRange);
+      }
       if (range) {
-        highlight.add(range);
+        (selectionRange ? selectedSentence : highlight).add(range);
       }
     },
     clear() {
       highlight.clear();
+      selectedPassage.clear();
+      selectedSentence.clear();
     },
   };
   return pageSentenceHighlighter;
@@ -871,6 +892,10 @@ async function startPlayback(
   let pageTextIndex: PageTextIndex | null = null;
   let sourceStart = -1;
   const highlighter = createPageSentenceHighlighter();
+  if (highlighter && selectionRange) {
+    highlighter.set(null, selectionRange);
+    window.getSelection()?.removeAllRanges();
+  }
   const alignmentsByChunk = new Map<number, ChunkAlignment>();
   let locatedWords: Array<{ sentenceKey: string; start: number; range: Range }> = [];
   let currentSentenceKey = "";
@@ -1124,7 +1149,7 @@ async function startPlayback(
     pendingSeekFrame = waiting ? targetFrame : null;
     nextStart = 0;
     playbackComplete = false;
-    highlighter?.clear();
+    highlighter?.set(null, selectionRange);
     currentSentenceKey = "";
     controls.pauseButton.textContent = context.state === "running" ? "Pause" : "Play";
 
@@ -1204,10 +1229,10 @@ async function startPlayback(
         sentenceRanges.set(sentenceKey, range);
       }
       if (selectionRange) {
-        if (range.compareBoundaryPoints(Range.END_TO_START, selectionRange) <= 0) {
+        if (range.compareBoundaryPoints(Range.START_TO_END, selectionRange) <= 0) {
           continue;
         }
-        if (range.compareBoundaryPoints(Range.START_TO_END, selectionRange) >= 0) {
+        if (range.compareBoundaryPoints(Range.END_TO_START, selectionRange) >= 0) {
           break;
         }
         if (range.compareBoundaryPoints(Range.START_TO_START, selectionRange) < 0) {
@@ -1239,7 +1264,7 @@ async function startPlayback(
     }
 
     if (!word || !highlighter) {
-      highlighter?.clear();
+      highlighter?.set(null, selectionRange);
       currentSentenceKey = "";
       return;
     }
@@ -1247,7 +1272,7 @@ async function startPlayback(
       return;
     }
 
-    highlighter?.set(word.range);
+    highlighter?.set(word.range, selectionRange);
     currentSentenceKey = word.sentenceKey;
   };
 
