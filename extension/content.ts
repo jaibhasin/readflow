@@ -387,6 +387,10 @@ function createControls(): {
         background: #354144;
       }
 
+      #speed-control {
+        position: relative;
+      }
+
       #speed-button {
         background: #20292c;
         border: 1px solid #667471;
@@ -404,20 +408,87 @@ function createControls(): {
 
       #speed-panel {
         align-items: center;
-        background: linear-gradient(180deg, #303b3e, #20292c);
+        background: linear-gradient(180deg, #354044, #20292c);
         border: 1px solid #667471;
-        border-radius: 8px;
-        box-shadow: 0 5px 16px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 8%);
+        border-radius: 7px;
+        box-shadow: 0 4px 12px rgb(0 0 0 / 38%), inset 0 1px rgb(255 255 255 / 9%);
         display: flex;
-        gap: 10px;
-        margin: 7px 0 0 auto;
-        padding: 8px 10px;
-        width: 205px;
+        gap: 8px;
+        height: 30px;
+        justify-content: space-between;
+        padding: 0 8px;
+        position: absolute;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 184px;
+        z-index: 2;
       }
 
       #speed-panel[hidden] { display: none; }
-      #speed-slider { accent-color: #d6e986; cursor: pointer; flex: 1; min-width: 0; }
-      #speed-value { color: #dce9ac; font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; min-width: 32px; text-align: right; }
+      #speed-slider {
+        appearance: none;
+        background: transparent;
+        cursor: pointer;
+        flex: 1;
+        height: 24px;
+        min-width: 0;
+        position: relative;
+        z-index: 2;
+      }
+
+      #speed-slider::-webkit-slider-runnable-track {
+        background: transparent;
+        border-radius: 4px;
+        height: 14px;
+      }
+
+      #speed-slider::-webkit-slider-thumb {
+        appearance: none;
+        background: #dce9ac;
+        border: 2px solid #56634c;
+        border-radius: 50%;
+        box-shadow: 0 0 0 2px rgb(214 233 134 / 14%), 0 1px 3px rgb(0 0 0 / 60%);
+        height: 14px;
+        margin-top: 0;
+        width: 14px;
+      }
+
+      #speed-ticks {
+        inset: 0 7px;
+        pointer-events: none;
+        position: absolute;
+        z-index: 1;
+      }
+
+      #speed-ticks::before {
+        background: #172022;
+        border-radius: 4px;
+        content: "";
+        height: 4px;
+        left: 0;
+        position: absolute;
+        right: 0;
+        top: 13px;
+      }
+
+      .speed-tick {
+        background: #78847b;
+        height: 4px;
+        opacity: 0.8;
+        position: absolute;
+        top: 11px;
+        width: 1px;
+      }
+
+      .speed-tick:nth-child(5n + 1) { background: #a5b08e; height: 7px; top: 11px; }
+
+      #speed-value {
+        color: #dce9ac;
+        font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        min-width: 27px;
+        text-align: center;
+      }
 
       #cassette-window {
         align-items: center;
@@ -729,16 +800,17 @@ function createControls(): {
         <div id="dock-header">
           <span id="brand">READFLOW</span>
           <div id="header-actions">
-            <button id="speed-button" type="button" title="Playback speed: 1 time" aria-label="Playback speed 1 time. Change speed">1×</button>
+            <div id="speed-control">
+              <button id="speed-button" type="button" title="Playback speed: 1 time" aria-label="Playback speed 1 time. Change speed" aria-expanded="false">1×</button>
+              <div id="speed-panel" role="group" aria-label="Playback speed" hidden>
+                <span id="speed-value">1×</span>
+                <div id="speed-ticks" aria-hidden="true">${Array.from({ length: 23 }, (_, index) => `<i class="speed-tick" style="left:${((index + 1) * 0.1 - 0.75) / 2.25 * 100}%"></i>`).join("")}</div>
+                <input id="speed-slider" type="range" min="0.75" max="3" step="0.05" value="1" aria-label="Playback speed" />
+              </div>
+            </div>
             <button id="debug-button" type="button" title="Open Readflow diagnostics">Debug</button>
             <button id="minimize-button" type="button" title="Minimize player" aria-label="Minimize Readflow player">−</button>
           </div>
-        </div>
-        <div id="speed-panel" role="group" aria-label="Playback speed" hidden>
-          <span>0.75×</span>
-          <input id="speed-slider" type="range" min="0.75" max="3" step="0.05" value="1" aria-label="Playback speed" />
-          <span id="speed-value">1×</span>
-          <span>3×</span>
         </div>
           <div id="tape-label">
             <span id="tape-side">SIDE A · RF-01</span>
