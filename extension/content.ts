@@ -1,5 +1,6 @@
 import { isProbablyReaderable, Readability } from "@mozilla/readability";
 import { bufferFramesForSpeed, isAudioAudible, nextPlaybackRate, playbackDuration, playedFrames } from "./playback-speed";
+import { StreamingTimeStretch } from "./time-stretch";
 import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenText } from "./spoken-text";
 import { shortTapeTitle } from "./tape-label";
@@ -862,7 +863,7 @@ async function startPlayback(
   let didReportHighlightMapping = false;
   let didReportHighlightMismatch = false;
   const sources = new Set<AudioBufferSourceNode>();
-  const scheduledRanges: Array<{ start: number; end: number; firstFrame: number }> = [];
+  const scheduledRanges: Array<{ start: number; end: number; firstFrame: number; rate: number }> = [];
   const audioTimeline: Array<{ buffer: AudioBuffer; firstFrame: number }> = [];
   const pendingSamples: Float32Array<ArrayBuffer>[] = [];
   let pendingFrameCount = 0;
@@ -871,6 +872,12 @@ async function startPlayback(
   let seekStartFrame = 0;
   let pendingSeekFrame: number | null = null;
   let playbackRate = selectedPlaybackRate;
+  let stretch = new StreamingTimeStretch(playbackRate, SAMPLE_RATE);
+  let processedOutputFrames = 0;
+  let stretchFinished = false;
+  let processingTimer = 0;
+  let processingEntry = 0;
+  let processingOffset = 0;
   const bufferFrames = (): number => bufferFramesForSpeed(START_BUFFER_FRAMES, playbackRate);
   let nextStart = 0;
   let streamFinished = false;
@@ -903,6 +910,7 @@ async function startPlayback(
     stopped = true;
     setCurrentPlaybackSpeed = null;
     cancelAnimationFrame(animationFrame);
+    window.clearTimeout(processingTimer);
     highlighter?.clear();
     if (recordStop && !playbackComplete) {
       recordClientEvent("stopped", getAudibleFrame() / SAMPLE_RATE * 1000);
@@ -971,7 +979,7 @@ async function startPlayback(
   };
 
   const finishIfReady = (): void => {
-    if (streamFinished && sources.size === 0 && pendingFrameCount === 0 && !stopped) {
+    if (streamFinished && stretchFinished && sources.size === 0 && pendingFrameCount === 0 && !stopped && !playbackComplete) {
       playbackComplete = true;
       highlighter?.clear();
       currentSentenceKey = "";
@@ -983,49 +991,89 @@ async function startPlayback(
     }
   };
 
-  const scheduleBuffer = (
-    timelineEntry: { buffer: AudioBuffer; firstFrame: number },
-    offsetFrames: number,
-  ): void => {
-    const frameCount = timelineEntry.buffer.length - offsetFrames;
-    if (frameCount <= 0) {
+  const scheduleOutput = (samples: Float32Array<ArrayBuffer>): void => {
+    if (samples.length === 0) {
       return;
     }
-
+    const buffer = context.createBuffer(1, samples.length, SAMPLE_RATE);
+    buffer.copyToChannel(samples, 0);
     const audioSource = context.createBufferSource();
-    audioSource.buffer = timelineEntry.buffer;
-    audioSource.playbackRate.value = playbackRate;
+    audioSource.buffer = buffer;
+    // Tempo is already applied to the PCM. Resampling here would change pitch.
+    audioSource.playbackRate.value = 1;
     audioSource.connect(context.destination);
 
     const schedulingLead = nextStart === 0 ? 0.05 : 0.01;
     const start = Math.max(context.currentTime + schedulingLead, nextStart);
-    const end = start + playbackDuration(frameCount, SAMPLE_RATE, playbackRate);
+    const end = start + playbackDuration(samples.length, SAMPLE_RATE, 1);
     scheduledRanges.push({
       start,
       end,
-      firstFrame: timelineEntry.firstFrame + offsetFrames,
+      firstFrame: seekStartFrame + processedOutputFrames * playbackRate,
+      rate: playbackRate,
     });
+    processedOutputFrames += samples.length;
     nextStart = end;
     sources.add(audioSource);
     audioSource.onended = () => {
       sources.delete(audioSource);
       finishIfReady();
     };
-    audioSource.start(start, offsetFrames / SAMPLE_RATE);
+    audioSource.start(start);
+  };
+
+  const finishStretch = (): void => {
+    if (!stretchFinished && pendingSeekFrame === null) {
+      scheduleOutput(stretch.finish());
+      stretchFinished = true;
+    }
+  };
+
+  const processAvailableAudio = (): void => {
+    processingTimer = 0;
+    if (stopped || pendingSeekFrame !== null) {
+      return;
+    }
+    // Bound each task so replaying a long cached article never blocks the UI.
+    const deadline = performance.now() + 8;
+    while (processingEntry < audioTimeline.length) {
+      const samples = audioTimeline[processingEntry].buffer.getChannelData(0);
+      const end = Math.min(samples.length, processingOffset + 8192);
+      scheduleOutput(stretch.push(samples.subarray(processingOffset, end)));
+      processingOffset = end;
+      if (processingOffset === samples.length) {
+        processingEntry += 1;
+        processingOffset = 0;
+      }
+      if (performance.now() >= deadline) {
+        processingTimer = window.setTimeout(processAvailableAudio, 0);
+        return;
+      }
+    }
+    if (streamFinished && pendingFrameCount === 0) {
+      finishStretch();
+      finishIfReady();
+    }
   };
 
   const scheduleFromFrame = (targetFrame: number): void => {
-    for (const timelineEntry of audioTimeline) {
-      const offsetFrames = Math.max(0, targetFrame - timelineEntry.firstFrame);
-      scheduleBuffer(timelineEntry, offsetFrames);
+    processingEntry = 0;
+    processingOffset = 0;
+    while (processingEntry < audioTimeline.length) {
+      const entry = audioTimeline[processingEntry];
+      if (entry.firstFrame + entry.buffer.length > targetFrame) {
+        processingOffset = Math.max(0, Math.floor(targetFrame - entry.firstFrame));
+        break;
+      }
+      processingEntry += 1;
     }
+    processAvailableAudio();
   };
 
   const scheduleSamples = (samples: Float32Array<ArrayBuffer>): void => {
     const buffer = context.createBuffer(1, samples.length, SAMPLE_RATE);
     buffer.copyToChannel(samples, 0);
-    const timelineEntry = { buffer, firstFrame: receivedFrames };
-    audioTimeline.push(timelineEntry);
+    audioTimeline.push({ buffer, firstFrame: receivedFrames });
     receivedFrames += samples.length;
     if (pendingSeekFrame !== null) {
       const seek = resolveSeekTarget(pendingSeekFrame, receivedFrames, streamFinished, bufferFrames());
@@ -1037,7 +1085,9 @@ async function startPlayback(
       scheduleFromFrame(seek.targetFrame);
       return;
     }
-    scheduleBuffer(timelineEntry, 0);
+    if (!processingTimer) {
+      processAvailableAudio();
+    }
   };
 
   const flushSamples = (force: boolean): void => {
@@ -1083,10 +1133,10 @@ async function startPlayback(
         break;
       }
       if (outputContextTime < range.end) {
-        frame = range.firstFrame + playedFrames(outputContextTime - range.start, SAMPLE_RATE, playbackRate);
+        frame = range.firstFrame + playedFrames(outputContextTime - range.start, SAMPLE_RATE, range.rate);
         break;
       }
-      frame = range.firstFrame + playedFrames(range.end - range.start, SAMPLE_RATE, playbackRate);
+      frame = range.firstFrame + playedFrames(range.end - range.start, SAMPLE_RATE, range.rate);
     }
     return Math.min(receivedFrames, Math.max(0, frame));
   };
@@ -1103,8 +1153,13 @@ async function startPlayback(
       audioSource.stop();
     }
     sources.clear();
+    window.clearTimeout(processingTimer);
+    processingTimer = 0;
     scheduledRanges.length = 0;
     seekStartFrame = targetFrame;
+    stretch = new StreamingTimeStretch(playbackRate, SAMPLE_RATE);
+    processedOutputFrames = 0;
+    stretchFinished = false;
     pendingSeekFrame = waiting ? targetFrame : null;
     nextStart = 0;
     playbackComplete = false;
@@ -1236,7 +1291,7 @@ async function startPlayback(
   };
 
   const updatePlaybackTime = (): void => {
-    if (stopped || streamFinished && sources.size === 0) {
+    if (stopped || playbackComplete) {
       return;
     }
 
@@ -1306,7 +1361,9 @@ async function startPlayback(
       if (pendingSeekFrame !== null) {
         seekTo(pendingSeekFrame);
       }
-      finishIfReady();
+      if (!processingTimer) {
+        processAvailableAudio();
+      }
     } else if (message.event === "error") {
       reportError(message.message || "Audio could not be generated.");
     }
@@ -1338,7 +1395,7 @@ async function startPlayback(
     } else {
       window.setTimeout(prepareTextIndex, 0);
     }
-    setPlayerStatus(controls, "Waiting for 100 ms of audio…");
+    setPlayerStatus(controls, "Buffering audio…");
     setTransportState(controls, "buffering");
     animationFrame = requestAnimationFrame(updatePlaybackTime);
   } catch {
