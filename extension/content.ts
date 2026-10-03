@@ -410,37 +410,47 @@ function createControls(): {
         align-items: center;
         background: linear-gradient(180deg, #354044, #20292c);
         border: 1px solid #667471;
+        box-sizing: border-box;
         border-radius: 7px;
         box-shadow: 0 4px 12px rgb(0 0 0 / 38%), inset 0 1px rgb(255 255 255 / 9%);
         display: flex;
-        gap: 8px;
-        height: 30px;
+        gap: 7px;
+        height: 32px;
         justify-content: space-between;
         padding: 0 8px;
         position: absolute;
         right: 0;
         top: 50%;
         transform: translateY(-50%);
-        width: 184px;
+        width: 204px;
         z-index: 2;
       }
 
       #speed-panel[hidden] { display: none; }
+      #speed-track {
+        flex: 1;
+        height: 22px;
+        min-width: 0;
+        position: relative;
+      }
+
       #speed-slider {
         appearance: none;
         background: transparent;
         cursor: pointer;
-        flex: 1;
-        height: 24px;
-        min-width: 0;
-        position: relative;
+        height: 22px;
+        inset: 0;
+        margin: 0;
+        outline: none;
+        position: absolute;
+        width: 100%;
         z-index: 2;
       }
 
       #speed-slider::-webkit-slider-runnable-track {
         background: transparent;
         border-radius: 4px;
-        height: 14px;
+        height: 22px;
       }
 
       #speed-slider::-webkit-slider-thumb {
@@ -449,16 +459,19 @@ function createControls(): {
         border: 2px solid #56634c;
         border-radius: 50%;
         box-shadow: 0 0 0 2px rgb(214 233 134 / 14%), 0 1px 3px rgb(0 0 0 / 60%);
-        height: 14px;
-        margin-top: 0;
-        width: 14px;
+        height: 13px;
+        margin-top: 4px;
+        width: 13px;
+      }
+
+      #speed-slider:focus-visible::-webkit-slider-thumb {
+        box-shadow: 0 0 0 3px rgb(214 233 134 / 24%), 0 1px 3px rgb(0 0 0 / 60%);
       }
 
       #speed-ticks {
         inset: 0 7px;
         pointer-events: none;
         position: absolute;
-        z-index: 1;
       }
 
       #speed-ticks::before {
@@ -469,7 +482,7 @@ function createControls(): {
         left: 0;
         position: absolute;
         right: 0;
-        top: 13px;
+        top: 9px;
       }
 
       .speed-tick {
@@ -477,11 +490,11 @@ function createControls(): {
         height: 4px;
         opacity: 0.8;
         position: absolute;
-        top: 11px;
+        top: 7px;
         width: 1px;
       }
 
-      .speed-tick:nth-child(5n + 1) { background: #a5b08e; height: 7px; top: 11px; }
+      .speed-tick:nth-child(5n + 1) { background: #a5b08e; height: 8px; top: 6px; }
 
       #speed-value {
         color: #dce9ac;
@@ -804,8 +817,10 @@ function createControls(): {
               <button id="speed-button" type="button" title="Playback speed: 1 time" aria-label="Playback speed 1 time. Change speed" aria-expanded="false">1×</button>
               <div id="speed-panel" role="group" aria-label="Playback speed" hidden>
                 <span id="speed-value">1×</span>
-                <div id="speed-ticks" aria-hidden="true">${Array.from({ length: 23 }, (_, index) => `<i class="speed-tick" style="left:${((index + 1) * 0.1 - 0.75) / 2.25 * 100}%"></i>`).join("")}</div>
-                <input id="speed-slider" type="range" min="0.75" max="3" step="0.05" value="1" aria-label="Playback speed" />
+                <div id="speed-track">
+                  <div id="speed-ticks" aria-hidden="true">${Array.from({ length: 23 }, (_, index) => `<i class="speed-tick" style="left:${((index + 1) * 0.1 - 0.75) / 2.25 * 100}%"></i>`).join("")}</div>
+                  <input id="speed-slider" type="range" min="0.75" max="3" step="0.05" value="1" aria-label="Playback speed" />
+                </div>
               </div>
             </div>
             <button id="debug-button" type="button" title="Open Readflow diagnostics">Debug</button>
