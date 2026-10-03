@@ -164,3 +164,19 @@ export function selectedWordOffset(source: ReadingSource, range: Range): number 
   }
   return null;
 }
+
+export function sliceReadingSource(source: ReadingSource, start: number, end = source.text.length): ReadingSource {
+  return {
+    text: source.text.slice(start, end),
+    spans: source.spans.flatMap((span) => {
+      const first = Math.max(start, span.start) - span.start;
+      const last = Math.min(end, span.start + span.offsets.length) - span.start;
+      return first >= last ? [] : [{ ...span, start: Math.max(start, span.start) - start, offsets: span.offsets.slice(first, last) }];
+    }),
+    sentences: source.sentences.flatMap((sentence) => {
+      const first = Math.max(start, sentence.start);
+      const last = Math.min(end, sentence.end);
+      return first >= last ? [] : [{ start: first - start, end: last - start }];
+    }),
+  };
+}

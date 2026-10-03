@@ -37,3 +37,6 @@ It verifies a 45-second frozen-tab pause, cached word seeking without a new spee
 
 The environment's administrator policy blocks loading unpacked extensions, so these browser checks simulate the port rather than testing an installed extension's worker.
 Actual worker lifecycle behavior and live Fish Audio still need a check in the user's installed Chrome extension.
+
+After merging the newer saved-reading, voice-switching, and auto-scroll changes from `main`, the JavaScript suite runs with Node's default isolation so Chrome mocks remain local to each test file.
+Additional playback regressions cover cached seeking after a saved resume, seeking backward into earlier article text, and reconnecting at the absolute article offset while preserving pause state.

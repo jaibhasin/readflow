@@ -179,7 +179,7 @@ def create_app(api_key: str | None = None) -> FastAPI:
             raise HTTPException(503, "Set FISH_API_KEY in .env, then restart the bridge.")
 
         def fetch_voices() -> dict[str, object]:
-            params: dict[str, str | int] = {"page_size": 20, "page_number": page, "sort_by": "score"}
+            params: dict[str, str | int] = {"page_size": 20, "page_number": page, "sort_by": "score", "language": "en"}
             if query.strip():
                 params["title"] = query.strip()
             request = Request(
@@ -201,6 +201,7 @@ def create_app(api_key: str | None = None) -> FastAPI:
                 for item in data["items"]
                 if isinstance(item, dict) and item.get("_id") and item.get("title")
                 and item.get("type") == "tts" and not item.get("dmca_taken_down")
+                and "en" in [str(language).lower().split("-")[0] for language in (item.get("languages") or [])]
             ]
             has_more = data.get("has_more")
             if has_more is None:

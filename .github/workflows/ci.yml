@@ -26,7 +26,7 @@ jobs:
       - name: Build extension
         run: npm run build
       - name: JavaScript unit tests
-        run: node --experimental-strip-types --test --test-isolation=none tests/*.test.mjs
+        run: node --experimental-strip-types --test tests/*.test.mjs
       - name: Browser playback tests
         # Google Chrome is included in the GitHub-hosted Ubuntu runner image.
         env:

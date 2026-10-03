@@ -81,7 +81,7 @@ const styles = `
   #voice-panel button:focus-visible { outline: 2px solid #d4e888; outline-offset: 2px; }
 `;
 
-export function createVoicePicker(shadow: ShadowRoot, dock: HTMLElement): {
+export function createVoicePicker(shadow: ShadowRoot, dock: HTMLElement, onSelect: (voice: FishVoice) => void): {
   readonly ready: Promise<void>;
   readonly selectedVoice: FishVoice;
   close(returnFocus?: boolean): void;
@@ -196,11 +196,13 @@ export function createVoicePicker(shadow: ShadowRoot, dock: HTMLElement): {
     choose.title = voice.name;
     choose.setAttribute("aria-pressed", String(voice.id === selected.id));
     choose.addEventListener("click", () => {
+      const didChange = selected.id !== voice.id;
       selected = voice;
       label.textContent = `Voice · ${voice.name}`;
       button.title = `Voice: ${voice.name}`;
       row.dataset.selected = "true";
       void sendExtensionMessage({ type: "select_voice", voice }).catch(() => undefined);
+      if (didChange) onSelect(voice);
       render();
       button.focus({ preventScroll: true });
       close();
@@ -338,9 +340,13 @@ export function createVoicePicker(shadow: ShadowRoot, dock: HTMLElement): {
 
   void sendExtensionMessage<VoiceReply<{ selected: FishVoice; favorites: FishVoice[] }>>({ type: "voice_settings" })
     .then((settings) => {
-      selected = settings.selected || DEFAULT_VOICE;
+      selected = settings.selected?.languages.some((language) => language.toLowerCase().split("-")[0] === "en")
+        ? settings.selected
+        : DEFAULT_VOICE;
       favorites.clear();
-      for (const voice of settings.favorites || [DEFAULT_VOICE]) favorites.set(voice.id, voice);
+      for (const voice of settings.favorites || [DEFAULT_VOICE]) {
+        if (voice.languages.some((language) => language.toLowerCase().split("-")[0] === "en")) favorites.set(voice.id, voice);
+      }
       label.textContent = `Voice · ${selected.name}`;
       button.title = `Voice: ${selected.name}`;
       readyResolve();

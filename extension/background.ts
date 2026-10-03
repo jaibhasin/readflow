@@ -1,3 +1,4 @@
+import { handleReadingMessage } from "./reading-list-background";
 import {
   appendTraceEvent,
   consumeDetailedCapture,
@@ -15,6 +16,11 @@ type StreamEvent = {
 };
 
 chrome.runtime.onMessage.addListener((message: { type?: string; query?: string; page?: number; voice?: unknown; favorite?: boolean }, _sender, sendResponse) => {
+  const readingResponse = handleReadingMessage(message as Record<string, unknown>, _sender);
+  if (readingResponse) {
+    void readingResponse.then(sendResponse);
+    return true;
+  }
   if (message.type === "open_diagnostics") {
     void chrome.tabs.create({ url: chrome.runtime.getURL("extension/diagnostics.html") });
   } else if (message.type === "list_voices") {
@@ -27,7 +33,7 @@ chrome.runtime.onMessage.addListener((message: { type?: string; query?: string; 
         const data = await response.json() as VoicePage & { detail?: string };
         if (!response.ok) throw new Error(data.detail || "Could not load Fish Audio voices.");
         if (!Array.isArray(data.voices) || !data.voices.every(isFishVoice)) throw new Error("The voice library returned an invalid response.");
-        sendResponse(data);
+        sendResponse({ ...data, voices: data.voices.filter((voice) => voice.languages.some((language) => language.toLowerCase().split("-")[0] === "en")) });
       }).catch((error: unknown) => sendResponse({ error: error instanceof Error ? error.message : "Start the Readflow bridge to browse voices." }));
     return true;
   } else if (message.type === "voice_settings") {

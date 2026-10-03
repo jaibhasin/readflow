@@ -55,7 +55,16 @@ try {
     window.__ports = [];
     window.chrome.runtime = {
       id: 'fixture-extension',
-      sendMessage: async () => ({ selected: { id: 'fixture', name: 'Fixture', languages: ['en'] }, favorites: [] }),
+      onMessage: { addListener() {} },
+      sendMessage: async message => {
+        if (message.type === 'voice_settings') return { selected: { id: 'fixture', name: 'Fixture', languages: ['en'] }, favorites: [] };
+        if (message.type === 'reading_for_page') return {};
+        if (message.type === 'reading_save') {
+          const item = { ...message.item, id: 'fixture-read', offset: 0, status: 'in-progress', sessionId: message.sessionId };
+          return { item };
+        }
+        return { ok: true };
+      },
       connect: () => {
         const handlers = [], disconnects = [];
         let connected = true;
