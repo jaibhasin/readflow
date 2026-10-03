@@ -27,7 +27,7 @@ The floating player stays within the current tab; navigation starts a new sessio
 | Browser extension | Chrome Manifest V3 | Current Chrome extension platform. |
 | Content script and player | TypeScript, native DOM, CSS in a shadow root | Small UI with styles isolated from the host page. |
 | Build | Vite for extension assets | Simple TypeScript bundling and local iteration. |
-| Article detection | Mozilla Readability on a cloned document, plus live DOM paragraph matching | Good main-content extraction while retaining links to visible text for highlighting. |
+| Article detection | Mozilla Readability on a cloned document with text-node source IDs | Keeps main-content extraction linked to exact visible text locations. |
 | Highlight | CSS Highlight API and DOM `Range` | Highlights words without inserting spans into an article. |
 | Audio | Web Audio API with 44.1 kHz PCM | Plays Fish's raw PCM chunks while keeping playback time tied to submitted audio frames. |
 | Local TTS bridge | Python 3.12+ managed with uv, FastAPI, Uvicorn, websockets, msgpack, python-dotenv | Uses uv to lock bridge dependencies; reads `FISH_API_KEY` from `.env` and relays Fish Audio's stream without bundling the key. |
@@ -61,9 +61,14 @@ Alignment snapshots are cumulative for each `chunk_seq`; a newer snapshot replac
 Adding `chunk_audio_offset_sec` to each word's local start and end times gives its position on the full audio timeline.
 
 For a full article, Readability identifies the reading content from a cloned document.
-The content script matches its normalized paragraphs to the live page, records text-node ranges, and excludes unmatched page chrome.
-For a selection, it records ranges directly from the user's selection.
-If an article cannot be matched reliably, the player should explain that it cannot follow the text rather than highlight unrelated words.
+Before extraction, temporary IDs on cloned text wrappers link each fragment to its original live text node.
+The visible page remains untouched, and these IDs survive Readability rebuilding its clone during retries.
+The extracted source records text-node character offsets in reading order, so repeated passages retain separate locations.
+For a selection, the source records only text and offsets inside the user's selected range.
+Spoken-text preparation retains an offset map back to that source.
+Fish words align in order to the exact text sent to Fish, using whole words and unique nearby context to recover after mismatches.
+Playback resolves highlights through saved source offsets instead of searching the full page.
+Uncertain, changed, or detached text locations receive no highlight rather than pointing to another occurrence.
 
 The player should start as soon as a small audio buffer is ready.
 It should update the active word from the media clock, scroll only when the active paragraph leaves a comfortable reading area, and respect manual scrolling for a short period.

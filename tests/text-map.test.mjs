@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createTextMap, locateWordOffsets, normalizeForSearch, sentenceSpans } from "../extension/text-map.ts";
+import { createTextMap, normalizeForSearch, sentenceSpans } from "../extension/text-map.ts";
+import { alignSpokenWords } from "../extension/word-alignment.ts";
 
 test("groups words by sentence without including leading spaces", () => {
   assert.deepEqual(sentenceSpans("First sentence.  Second sentence?"), [
@@ -26,7 +27,7 @@ test("detects sentences before folding text for case-insensitive matching", () =
     "First sentence.", "Second sentence?", "Third sentence.",
   ]);
   assert.deepEqual(
-    locateWordOffsets(index.text, ["FIRST", "second", "Third"], 0),
+    alignSpokenWords(index.text, ["FIRST", "sentence", "second", "sentence", "Third", "sentence"]).filter((_, index) => index % 2 === 0),
     index.sentences.map(({ start }) => start),
   );
 });
@@ -41,18 +42,18 @@ test("preserves character offsets and block boundaries when folding text", () =>
     { start: 2, end: bodyStart - 1 },
     { start: bodyStart, end: original.length - 2 },
   ]);
-  assert.deepEqual(locateWordOffsets(index.text, ["body"], bodyStart), [bodyStart]);
+  assert.equal(index.text.slice(bodyStart, bodyStart + 4), "body");
 });
 
 test("matches spoken nth to rendered superscript text", () => {
   const page = normalizeForSearch("for the nᵗʰ time on how");
-  const offsets = locateWordOffsets(page, ["for", "the", "nth", "time"], 0);
+  const offsets = alignSpokenWords(page, ["for", "the", "nth", "time"]);
   assert.deepEqual(offsets, [0, 4, 8, 12]);
 });
 
 test("skips unmatched math and resumes at the next nearby word", () => {
   const page = normalizeForSearch("for the $n^\\text{th}$ time on how");
-  const offsets = locateWordOffsets(page, ["for", "the", "nth", "time", "on"], 0);
+  const offsets = alignSpokenWords(page, ["for", "the", "nth", "time", "on"]);
   assert.deepEqual(offsets.slice(0, 3), [0, 4, null]);
   assert.equal(page.slice(offsets[3], offsets[3] + 4), "time");
   assert.equal(page.slice(offsets[4], offsets[4] + 2), "on");
@@ -60,5 +61,5 @@ test("skips unmatched math and resumes at the next nearby word", () => {
 
 test("does not attach a word to a distant occurrence", () => {
   const page = normalizeForSearch(`start ${"filler ".repeat(20)}time`);
-  assert.deepEqual(locateWordOffsets(page, ["start", "time"], 0), [0, null]);
+  assert.deepEqual(alignSpokenWords(page, ["start", "time"]), [0, null]);
 });

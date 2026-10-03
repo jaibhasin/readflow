@@ -30,24 +30,3 @@ export function createTextMap(text: string, blockStarts: number[] = [0]) {
     sentences: sentenceSpans(text, blockStarts),
   };
 }
-
-export function locateWordOffsets(
-  pageText: string,
-  words: string[],
-  startAt: number,
-  maxGap = 80,
-): Array<number | null> {
-  let cursor = startAt;
-  return words.map((word) => {
-    const normalizedWord = normalizeForSearch(word);
-    if (!normalizedWord) {
-      return null;
-    }
-    const position = pageText.indexOf(normalizedWord, cursor);
-    if (position < 0 || position - cursor > maxGap) {
-      return null;
-    }
-    cursor = position + normalizedWord.length;
-    return position;
-  });
-}

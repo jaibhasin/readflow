@@ -7,7 +7,7 @@ It streams Fish Audio speech through a local Python bridge and starts playback a
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 22.13 or newer
 - Python 3.12 or newer
 - [uv](https://docs.astral.sh/uv/)
 - Google Chrome
@@ -100,7 +100,7 @@ Fish Audio events should arrive as the service generates audio and timestamp dat
 
 ## Run checks
 
-The TypeScript unit tests below require Node.js 22.6 or newer.
+The TypeScript and DOM unit tests below require Node.js 22.13 or newer.
 
 ```sh
 npm run check
