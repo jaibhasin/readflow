@@ -3,7 +3,7 @@ import { bufferFramesForSpeed, isAudioAudible, nextPlaybackRate, playbackDuratio
 import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenText } from "./spoken-text";
 import { shortTapeTitle } from "./tape-label";
-import { foldCharacter, locateWordOffsets, normalizeForSearch, sentenceSpans } from "./text-map";
+import { createTextMap, locateWordOffsets, normalizeForSearch } from "./text-map";
 
 let stopCurrentPlayback: (() => void) | null = null;
 let setCurrentPlaybackSpeed: ((rate: number) => void) | null = null;
@@ -160,7 +160,7 @@ function createPageTextIndex(): PageTextIndex {
         }
       } else {
         spanStart = spanStart < 0 ? normalized.length : spanStart;
-        normalized += foldCharacter(character);
+        normalized += character;
         offsets.push(offset);
       }
     }
@@ -169,7 +169,7 @@ function createPageTextIndex(): PageTextIndex {
     }
   }
 
-  return { text: normalized, spans, sentences: sentenceSpans(normalized, blockStarts) };
+  return { ...createTextMap(normalized, blockStarts), spans };
 }
 
 function findSourceStart(index: PageTextIndex, text: string, range?: Range): number {
