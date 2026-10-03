@@ -428,10 +428,20 @@ function createControls(): {
 
       #speed-panel[hidden] { display: none; }
       #speed-track {
-        flex: 1;
+        flex: 0 0 142px;
         height: 22px;
         min-width: 0;
         position: relative;
+        width: 142px;
+      }
+
+      #speed-track::before {
+        background: #172022;
+        border-radius: 4px;
+        content: "";
+        height: 4px;
+        inset: 9px 7px auto;
+        position: absolute;
       }
 
       #speed-slider {
@@ -468,30 +478,15 @@ function createControls(): {
         box-shadow: 0 0 0 3px rgb(214 233 134 / 24%), 0 1px 3px rgb(0 0 0 / 60%);
       }
 
-      #speed-ticks {
-        inset: 0 7px;
-        pointer-events: none;
-        position: absolute;
-      }
-
-      #speed-ticks::before {
-        background: #172022;
-        border-radius: 4px;
-        content: "";
-        height: 4px;
-        left: 0;
-        position: absolute;
-        right: 0;
-        top: 9px;
-      }
-
       .speed-tick {
         background: #78847b;
         height: 4px;
         opacity: 0.8;
+        pointer-events: none;
         position: absolute;
         top: 7px;
         width: 1px;
+        z-index: 1;
       }
 
       .speed-tick:nth-child(5n + 1) { background: #a5b08e; height: 8px; top: 6px; }
@@ -818,7 +813,7 @@ function createControls(): {
               <div id="speed-panel" role="group" aria-label="Playback speed" hidden>
                 <span id="speed-value">1×</span>
                 <div id="speed-track">
-                  <div id="speed-ticks" aria-hidden="true">${Array.from({ length: 23 }, (_, index) => `<i class="speed-tick" style="left:${((index + 1) * 0.1 - 0.75) / 2.25 * 100}%"></i>`).join("")}</div>
+                  ${Array.from({ length: 23 }, (_, index) => `<i class="speed-tick" aria-hidden="true" style="left:${((index + 1) * 0.1 - 0.75) / 2.25 * 100}%"></i>`).join("")}
                   <input id="speed-slider" type="range" min="0.75" max="3" step="0.05" value="1" aria-label="Playback speed" />
                 </div>
               </div>
