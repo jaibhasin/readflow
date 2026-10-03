@@ -27,12 +27,19 @@ await new Promise(resolve=>bridge.listen(4179,'127.0.0.1',resolve));
 await new Promise(resolve=>page.listen(4180,'127.0.0.1',resolve));
 const profile = await mkdtemp(join(tmpdir(), 'readflow-chrome-'));
 const chrome = spawn(process.env.CHROMIUM_PATH || 'chromium',['--headless=new','--no-sandbox','--disable-gpu','--autoplay-policy=no-user-gesture-required','--remote-debugging-port=9224',`--user-data-dir=${profile}`,'about:blank'],{stdio:['ignore','ignore','pipe']});
-chrome.stderr.on('data',()=>{});
+let browserLog = '';
+let launchError;
+chrome.stderr.on('data', data => { browserLog = (browserLog + data.toString()).slice(-8000); });
+chrome.on('error', error => { launchError = error; });
 let ws;
 try {
   let version;
-  for(let i=0;i<50;i++) { try { version=await (await fetch('http://127.0.0.1:9224/json/version')).json(); break; } catch { await wait(100); } }
-  assert.ok(version, 'Chromium starts');
+  for(let i=0;i<150;i++) {
+    if (launchError || chrome.exitCode !== null) break;
+    try { version=await (await fetch('http://127.0.0.1:9224/json/version')).json(); break; }
+    catch { await wait(100); }
+  }
+  assert.ok(version, `Chromium starts: ${launchError?.message || browserLog}`);
   ws = new WebSocket(version.webSocketDebuggerUrl);
   await new Promise(resolve=>ws.addEventListener('open',resolve,{once:true}));
   let seq=0; const pending=new Map();
