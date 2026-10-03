@@ -1,16 +1,16 @@
-import { isProbablyReaderable, Readability } from "@mozilla/readability";
+import { mapSentenceTimings, type SentenceTiming } from "./highlight-timeline";
+import { createArticleSource, createSelectionSource, type ReadingSource } from "./reading-source";
 import { bufferFramesForSpeed, isAudioAudible, nextPlaybackRate, playbackDuration, playedFrames } from "./playback-speed";
 import { resolveSeekTarget } from "./seek-target";
-import { prepareSpokenText } from "./spoken-text";
+import { prepareSpokenSource } from "./spoken-text";
 import { shortTapeTitle } from "./tape-label";
-import { foldCharacter, locateWordOffsets, normalizeForSearch, sentenceSpans } from "./text-map";
 
 let stopCurrentPlayback: (() => void) | null = null;
 let setCurrentPlaybackSpeed: ((rate: number) => void) | null = null;
 let selectedPlaybackRate = 1;
 const SAMPLE_RATE = 44_100;
 const START_BUFFER_FRAMES = SAMPLE_RATE / 10;
-const articleText = getArticleText();
+const initialArticleSource = createArticleSource(document);
 let pageSentenceHighlighter: PageSentenceHighlighter | null = null;
 
 type WordTiming = {
@@ -24,31 +24,25 @@ type ChunkAlignment = {
   segments: WordTiming[];
 };
 
-type TextSpan = {
-  node: Text;
-  start: number;
-  offsets: number[];
-};
-
-type PageTextIndex = {
-  text: string;
-  spans: TextSpan[];
-  sentences: Array<{ start: number; end: number }>;
-};
-
 type PageSentenceHighlighter = {
-  set(range: Range | null): void;
+  set(ranges: Range[]): void;
   clear(): void;
 };
 
 type TransportState = "idle" | "connecting" | "buffering" | "playing" | "paused" | "finished" | "stopped" | "error";
 
-if (articleText && !document.getElementById("readflow-controls")) {
+if (initialArticleSource && !document.getElementById("readflow-controls")) {
   const controls = createControls();
   document.documentElement.append(controls.host);
 
   controls.articleButton.addEventListener("click", () => {
-    void startPlayback(controls, articleText, "Article");
+    const readingSource = createArticleSource(document);
+    if (readingSource) {
+      void startPlayback(controls, readingSource, "Article");
+    } else {
+      setPlayerStatus(controls, "This page no longer has readable article text.");
+      controls.status.hidden = false;
+    }
   });
 
   controls.debugButton.addEventListener("click", () => {
@@ -78,12 +72,12 @@ if (articleText && !document.getElementById("readflow-controls")) {
   });
 
   controls.selectionButton.addEventListener("click", () => {
-    const selectedText = getSelectedText();
     const selection = window.getSelection();
     const range = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : undefined;
 
-    if (selectedText) {
-      void startPlayback(controls, selectedText, "Selected text", range);
+    const readingSource = range ? createSelectionSource(range) : null;
+    if (readingSource) {
+      void startPlayback(controls, readingSource, "Selected text");
       controls.selectionButton.hidden = true;
     }
   });
@@ -104,111 +98,10 @@ if (articleText && !document.getElementById("readflow-controls")) {
   );
 }
 
-function getArticleText(): string | null {
-  if (!isProbablyReaderable(document)) {
-    return null;
-  }
-
-  const article = new Readability(document.cloneNode(true) as Document).parse();
-  const text = article?.textContent?.trim();
-
-  return text || null;
-}
-
 function getSelectedText(): string | null {
   const text = window.getSelection()?.toString().trim();
 
   return text || null;
-}
-
-function createPageTextIndex(): PageTextIndex {
-  const text = document.body;
-  const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) => {
-      const parent = node.parentElement;
-      return parent?.closest("script, style, noscript, template, [hidden], [aria-hidden='true'], #readflow-controls")
-        ? NodeFilter.FILTER_REJECT
-        : NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  let normalized = "";
-  const spans: TextSpan[] = [];
-  const blockStarts = [0];
-  let currentBlock: Element | null = null;
-
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text;
-    const block = node.parentElement?.closest("p, h1, h2, h3, h4, h5, h6, li, blockquote, figcaption, td, th, dt, dd, pre, div, section, article, main") ?? null;
-    if (block !== currentBlock) {
-      if (normalized) {
-        if (!normalized.endsWith(" ")) {
-          normalized += " ";
-        }
-        blockStarts.push(normalized.length);
-      }
-      currentBlock = block;
-    }
-    let spanStart = -1;
-    const offsets: number[] = [];
-    for (let offset = 0; offset < node.data.length; offset += 1) {
-      const character = node.data[offset];
-      if (/\s/.test(character)) {
-        if (normalized && !normalized.endsWith(" ")) {
-          spanStart = spanStart < 0 ? normalized.length : spanStart;
-          normalized += " ";
-          offsets.push(offset);
-        }
-      } else {
-        spanStart = spanStart < 0 ? normalized.length : spanStart;
-        normalized += foldCharacter(character);
-        offsets.push(offset);
-      }
-    }
-    if (offsets.length) {
-      spans.push({ node, start: spanStart, offsets });
-    }
-  }
-
-  return { text: normalized, spans, sentences: sentenceSpans(normalized, blockStarts) };
-}
-
-function findSourceStart(index: PageTextIndex, text: string, range?: Range): number {
-  if (range?.startContainer.nodeType === Node.TEXT_NODE) {
-    const node = range.startContainer as Text;
-    const span = index.spans.find((candidate) => candidate.node === node);
-    const localIndex = span?.offsets.findIndex((offset) => offset >= range.startOffset) ?? -1;
-    if (span && localIndex >= 0) {
-      return span.start + localIndex;
-    }
-  }
-
-  const normalizedSource = normalizeForSearch(text);
-  const prefix = normalizedSource.slice(0, 80);
-  for (let length = prefix.length; length > 0; length -= 8) {
-    const found = index.text.indexOf(prefix.slice(0, length));
-    if (found >= 0) {
-      return found;
-    }
-  }
-  return -1;
-}
-
-function getTextPoint(index: PageTextIndex, position: number): { node: Text; offset: number } | null {
-  let low = 0;
-  let high = index.spans.length - 1;
-  while (low <= high) {
-    const middle = Math.floor((low + high) / 2);
-    const span = index.spans[middle];
-    const end = span.start + span.offsets.length;
-    if (position < span.start) {
-      high = middle - 1;
-    } else if (position >= end) {
-      low = middle + 1;
-    } else {
-      return { node: span.node, offset: span.offsets[position - span.start] };
-    }
-  }
-  return null;
 }
 
 function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
@@ -230,9 +123,9 @@ function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
   const highlight = new HighlightConstructor();
   registry.set(name, highlight);
   pageSentenceHighlighter = {
-    set(range) {
+    set(ranges) {
       highlight.clear();
-      if (range) {
+      for (const range of ranges) {
         highlight.add(range);
       }
     },
@@ -829,13 +722,13 @@ function setCompactMode(controls: ReturnType<typeof createControls>, compact: bo
 
 async function startPlayback(
   controls: ReturnType<typeof createControls>,
-  text: string,
+  readingSource: ReadingSource,
   source: string,
-  selectionRange?: Range,
 ): Promise<void> {
   stopCurrentPlayback?.();
   controls.playerControls.hidden = true;
-  const spokenText = prepareSpokenText(text);
+  const spoken = prepareSpokenSource(readingSource.text);
+  const spokenText = spoken.text;
   controls.tapeTitle.textContent = source === "Selected text" ? "Selected passage" : shortTapeTitle(document.title);
   controls.tapeTitle.title = controls.tapeTitle.textContent;
   setTransportState(controls, "connecting");
@@ -852,11 +745,9 @@ async function startPlayback(
     return;
   }
   const port = chrome.runtime.connect({ name: "readflow-tts" });
-  let pageTextIndex: PageTextIndex | null = null;
-  let sourceStart = -1;
   const highlighter = createPageSentenceHighlighter();
   const alignmentsByChunk = new Map<number, ChunkAlignment>();
-  let locatedWords: Array<{ sentenceKey: string; start: number; range: Range }> = [];
+  let locatedWords: SentenceTiming[] = [];
   let currentSentenceKey = "";
   let alignmentNeedsMapping = false;
   let didReportHighlightMapping = false;
@@ -1143,10 +1034,6 @@ async function startPlayback(
   };
 
   const rebuildWordRanges = (): void => {
-    if (!pageTextIndex || sourceStart < 0) {
-      return;
-    }
-
     const segments = Array.from(alignmentsByChunk.values()).flatMap((snapshot) =>
       snapshot.segments.map((segment) => ({
         text: segment.text,
@@ -1154,59 +1041,17 @@ async function startPlayback(
         end: snapshot.offset + segment.end,
       })),
     ).sort((left, right) => left.start - right.start);
-    const offsets = locateWordOffsets(pageTextIndex.text, segments.map((segment) => segment.text), sourceStart);
-    const words: typeof locatedWords = [];
-    const sentenceRanges = new Map<string, Range>();
-
-    for (const [index, segment] of segments.entries()) {
-      const matchAt = offsets[index];
-      const matchedText = normalizeForSearch(segment.text);
-      if (matchAt === null || !matchedText || !Number.isFinite(segment.start) || !Number.isFinite(segment.end)) {
-        if (!didReportHighlightMismatch) {
-          recordClientEvent("highlight_text_mismatch", segment.start * 1000);
-          didReportHighlightMismatch = true;
-        }
-        continue;
-      }
-
-      const sentence = pageTextIndex.sentences.find((span) => span.start <= matchAt && matchAt < span.end);
-      if (!sentence) {
-        continue;
-      }
-      const first = getTextPoint(pageTextIndex, sentence.start);
-      const last = getTextPoint(pageTextIndex, sentence.end - 1);
-      if (!first || !last) {
-        continue;
-      }
-
-      const sentenceKey = `${sentence.start}:${sentence.end}`;
-      let range = sentenceRanges.get(sentenceKey);
-      if (!range) {
-        range = document.createRange();
-        range.setStart(first.node, first.offset);
-        range.setEnd(last.node, last.offset + 1);
-        sentenceRanges.set(sentenceKey, range);
-      }
-      if (selectionRange) {
-        if (range.compareBoundaryPoints(Range.END_TO_START, selectionRange) <= 0) {
-          continue;
-        }
-        if (range.compareBoundaryPoints(Range.START_TO_END, selectionRange) >= 0) {
-          break;
-        }
-        if (range.compareBoundaryPoints(Range.START_TO_START, selectionRange) < 0) {
-          range.setStart(selectionRange.startContainer, selectionRange.startOffset);
-        }
-        if (range.compareBoundaryPoints(Range.END_TO_END, selectionRange) > 0) {
-          range.setEnd(selectionRange.endContainer, selectionRange.endOffset);
-        }
-      }
-      words.push({ sentenceKey, start: segment.start, range });
+    locatedWords = mapSentenceTimings(readingSource, spoken, segments);
+    currentSentenceKey = "";
+    const mappedWords = locatedWords.filter((word) => word.ranges.length);
+    const mismatch = locatedWords.find((word) => !word.ranges.length);
+    if (mismatch && !didReportHighlightMismatch) {
+      recordClientEvent("highlight_text_mismatch", mismatch.start * 1000);
+      didReportHighlightMismatch = true;
     }
-    locatedWords = words;
     if (!didReportHighlightMapping) {
       recordClientEvent("highlight_mapping", undefined, {
-        mapped_words: words.length,
+        mapped_words: mappedWords.length,
         alignment_words: segments.length,
       });
       didReportHighlightMapping = true;
@@ -1231,7 +1076,7 @@ async function startPlayback(
       return;
     }
 
-    highlighter?.set(word.range);
+    highlighter?.set(word.ranges);
     currentSentenceKey = word.sentenceKey;
   };
 
@@ -1245,7 +1090,7 @@ async function startPlayback(
       return;
     }
 
-    if (alignmentNeedsMapping && pageTextIndex) {
+    if (alignmentNeedsMapping) {
       rebuildWordRanges();
       alignmentNeedsMapping = false;
     }
@@ -1323,21 +1168,6 @@ async function startPlayback(
       wordCount: spokenText.trim().split(/\s+/).length,
       startedAt: new Date().toISOString(),
     });
-    const prepareTextIndex = (): void => {
-      pageTextIndex = createPageTextIndex();
-      sourceStart = findSourceStart(pageTextIndex, text, selectionRange);
-      if (sourceStart < 0) {
-        recordClientEvent("highlight_source_not_found");
-      }
-    };
-    const idleWindow = window as Window & {
-      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
-    };
-    if (idleWindow.requestIdleCallback) {
-      idleWindow.requestIdleCallback(prepareTextIndex, { timeout: 500 });
-    } else {
-      window.setTimeout(prepareTextIndex, 0);
-    }
     setPlayerStatus(controls, "Waiting for 100 ms of audio…");
     setTransportState(controls, "buffering");
     animationFrame = requestAnimationFrame(updatePlaybackTime);
