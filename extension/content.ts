@@ -1,5 +1,8 @@
+import { resumeOffset, type ReadingItem } from "./reading-list-store";
+import { mapReadingOffsets } from "./reading-progress";
+import { sentenceSpans } from "./text-map";
 import { mapSentenceTimings, type SentenceTiming } from "./highlight-timeline";
-import { createArticleSource, createSelectionSource, sourceRanges, type ReadingSource } from "./reading-source";
+import { createArticleSource, createSelectionSource, sliceReadingSource, sourceRanges, type ReadingSource } from "./reading-source";
 import { createReadingAutoScroller } from "./auto-scroll";
 import { bufferFramesForSpeed, isAudioAudible, playbackDuration, playedFrames } from "./playback-speed";
 import { StreamingTimeStretch } from "./time-stretch";
@@ -105,10 +108,59 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
   const voicePicker = createVoicePicker(controls.host.shadowRoot!, controls.dock);
   voicePickers.set(controls.host, voicePicker);
 
-  controls.articleButton.addEventListener("click", () => {
+  let savedRead: ReadingItem | undefined;
+  const readingLookup = sendExtensionMessage<{ item?: ReadingItem; error?: string }>({ type: "reading_for_page" }).then((result) => {
+    savedRead = result.item;
+    if (savedRead?.status === "in-progress") controls.articleButton.textContent = "Resume read";
+    else if (savedRead?.source === "selection") controls.articleButton.textContent = "Listen to saved passage";
+  }).catch(() => undefined);
+
+  const saveForLater = async (): Promise<{ ok?: boolean; error?: string }> => {
+    const article = createArticleSource(document);
+    if (!article) return { error: "This page no longer has readable article text." };
+    const result = await sendExtensionMessage<{ item?: ReadingItem; error?: string }>({
+      type: "reading_save", item: { url: location.href, title: document.title, source: "article", text: article.text },
+    });
+    if (result.error) return { error: result.error };
+    controls.saveButton.textContent = "Saved for later";
+    return { ok: true };
+  };
+  controls.saveButton.addEventListener("click", () => {
+    controls.saveButton.disabled = true;
+    void saveForLater().then((result) => {
+      setPlayerStatus(controls, result.error || "Saved for later");
+      controls.status.hidden = false;
+    }).catch(() => setPlayerStatus(controls, RECONNECT_MESSAGE)).finally(() => { controls.saveButton.disabled = false; });
+  });
+  controls.readsButton.addEventListener("click", () => {
+    void sendExtensionMessage({ type: "open_reading_list" }).catch(() => setPlayerStatus(controls, RECONNECT_MESSAGE));
+  });
+  extensionRuntime().onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.type !== "save_read") return;
+    void saveForLater().then(sendResponse).catch(() => sendResponse({ error: RECONNECT_MESSAGE }));
+    return true;
+  });
+
+  controls.articleButton.addEventListener("click", async () => {
+    await readingLookup;
     const readingSource = createArticleSource(document);
     if (readingSource) {
-      void startPlayback(controls, readingSource, "Article");
+      const resume = savedRead;
+      savedRead = undefined;
+      controls.articleButton.textContent = "Listen to article";
+      if (resume?.source === "selection") {
+        const start = readingSource.text.indexOf(resume.text);
+        const selection = start >= 0 ? sliceReadingSource(readingSource, start, start + resume.text.length)
+          : { text: resume.text, spans: [], sentences: sentenceSpans(resume.text) };
+        void startPlayback(controls, selection, "Selected text", undefined, resume);
+      } else {
+        if (resume && resume.text !== readingSource.text) {
+          setPlayerStatus(controls, "This article has changed. Choose Listen to article to start its current text.");
+          controls.status.hidden = false;
+          return;
+        }
+        void startPlayback(controls, readingSource, "Article", undefined, resume);
+      }
     } else {
       setPlayerStatus(controls, "This page no longer has readable article text.");
       controls.status.hidden = false;
@@ -269,6 +321,8 @@ function createControls(): {
   miniPlayer: HTMLDivElement;
   articleButton: HTMLButtonElement;
   debugButton: HTMLButtonElement;
+  saveButton: HTMLButtonElement;
+  readsButton: HTMLButtonElement;
   speedButton: HTMLButtonElement;
   speedPanel: HTMLDivElement;
   speedSlider: HTMLInputElement;
@@ -394,6 +448,10 @@ function createControls(): {
         animation: power-glow 1.8s ease-in-out infinite;
       }
 
+      #save-actions { display: flex; gap: 8px; margin-top: 12px; border-top: 1px solid #46534f; padding-top: 9px; }
+      #save-actions button { flex: 1; font-size: 11px; padding: 5px 8px; min-height: 30px; border-radius: 6px; background: #273234; border-color: #53615d; box-shadow: inset 0 1px rgb(255 255 255 / 5%); color: #c6d2c8; }
+      #save-actions button:hover { background: #354144; border-color: #819076; color: #e4edc0; }
+      #save-button::before { content: "+"; color: #d6e986; margin-right: 6px; font: 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
       #debug-button {
         background: transparent;
         border: 0;
@@ -892,6 +950,7 @@ function createControls(): {
           <button id="stop-button" type="button">Stop</button>
         </div>
         <button id="article-button" type="button">Listen to article</button>
+        <div id="save-actions"><button id="save-button" type="button">Save for later</button><button id="reads-button" type="button">Reads</button></div>
         </div>
         <div id="mini-player" hidden>
           <span id="mini-mark" aria-hidden="true">RF</span>
@@ -915,6 +974,8 @@ function createControls(): {
     miniPlayer: shadow.querySelector<HTMLDivElement>("#mini-player")!,
     articleButton: shadow.querySelector<HTMLButtonElement>("#article-button")!,
     debugButton: shadow.querySelector<HTMLButtonElement>("#debug-button")!,
+    saveButton: shadow.querySelector<HTMLButtonElement>("#save-button")!,
+    readsButton: shadow.querySelector<HTMLButtonElement>("#reads-button")!,
     speedButton: shadow.querySelector<HTMLButtonElement>("#speed-button")!,
     speedPanel: shadow.querySelector<HTMLDivElement>("#speed-panel")!,
     speedSlider: shadow.querySelector<HTMLInputElement>("#speed-slider")!,
@@ -993,14 +1054,34 @@ async function startPlayback(
   readingSource: ReadingSource,
   source: string,
   selectionRange?: Range,
+  savedRead?: ReadingItem,
 ): Promise<void> {
   const picker = voicePickers.get(controls.host);
   await picker?.ready;
   const voice: FishVoice = picker?.selectedVoice ?? DEFAULT_VOICE;
   stopCurrentPlayback?.();
   controls.playerControls.hidden = true;
+  const sessionId = crypto.randomUUID();
+  const fullSource = readingSource;
+  let reading: ReadingItem;
+  try {
+    const result = await sendExtensionMessage<{ item?: ReadingItem; error?: string }>({
+      type: "reading_save", sessionId,
+      item: { url: location.href, title: document.title, source: source === "Article" ? "article" : "selection", text: fullSource.text },
+    });
+    if (!result.item) throw new Error(result.error || "Could not save reading progress.");
+    reading = result.item;
+  } catch (error) {
+    setPlayerStatus(controls, error instanceof Error ? error.message : "Could not save reading progress.");
+    controls.status.hidden = false;
+    return;
+  }
+  const startOffset = savedRead?.status !== "completed" ? resumeOffset(fullSource.text, reading.offset) : 0;
+  readingSource = sliceReadingSource(fullSource, startOffset);
+  let checkpoint = reading.offset;
   const spoken = prepareSpokenSource(readingSource.text);
   const spokenText = spoken.text;
+  const sections = splitTextSections(spokenText);
   controls.tapeTitle.textContent = source === "Selected text" ? "Selected passage" : shortTapeTitle(document.title);
   controls.tapeTitle.title = controls.tapeTitle.textContent;
   setTransportState(controls, "connecting");
@@ -1034,6 +1115,8 @@ async function startPlayback(
   }
   const alignmentsByChunk = new Map<string, ChunkAlignment>();
   let locatedWords: SentenceTiming[] = [];
+  let readingOffsets: Array<{ start: number; offset: number }> = [];
+  const sectionOffsets = new Map<number, { start: number; offset: number }>();
   let currentSentenceKey = "";
   let alignmentNeedsMapping = false;
   let didReportHighlightMapping = false;
@@ -1064,8 +1147,8 @@ async function startPlayback(
   let playbackStarted = false;
   let startupReady = false;
   let lastBufferStatusAt = 0;
-  const sessionId = crypto.randomUUID();
   const sessionStarted = performance.now();
+  let lastProgressAt = 0;
 
   const recordClientEvent = (kind: string, playbackMs?: number, value?: unknown): void => {
     try {
@@ -1085,11 +1168,29 @@ async function startPlayback(
     recordClientEvent("highlight_api_unavailable");
   }
 
+  const persistProgress = (completed = false): void => {
+    if (alignmentNeedsMapping) { rebuildWordRanges(); alignmentNeedsMapping = false; }
+    const seconds = getAudibleFrame() / SAMPLE_RATE;
+    let current: { start: number; offset: number } | undefined;
+    for (const word of [...sectionOffsets.values(), ...readingOffsets].sort((a, b) => a.start - b.start)) {
+      if (word.start > seconds) break;
+      current = word;
+    }
+    if (current && seconds > 0) checkpoint = startOffset + current.offset;
+    void sendExtensionMessage<{ error?: string }>({ type: "reading_progress", id: reading.id, sessionId, offset: checkpoint, completed })
+      .then((result) => { if (result.error) setPlayerStatus(controls, result.error); })
+      .catch(() => setPlayerStatus(controls, "Reading progress could not be saved. Refresh this tab to reconnect."));
+  };
+  const pageHide = (): void => { cleanup(); };
+  window.addEventListener("pagehide", pageHide);
+
   const cleanup = (recordStop = true): void => {
     if (stopped) {
       return;
     }
 
+    if (!playbackComplete) persistProgress();
+    window.removeEventListener("pagehide", pageHide);
     stopped = true;
     setCurrentPlaybackSpeed = null;
     cancelAnimationFrame(animationFrame);
@@ -1113,9 +1214,20 @@ async function startPlayback(
   controls.pauseButton.textContent = "Pause";
   controls.pauseButton.onclick = () => {
     if (playbackComplete) {
-      playbackComplete = false;
-      controls.pauseButton.textContent = "Pause";
-      seekTo(0);
+      controls.pauseButton.disabled = true;
+      void sendExtensionMessage<{ item?: ReadingItem; error?: string }>({
+        type: "reading_save", sessionId,
+        item: { url: location.href, title: document.title, source: reading.source, text: fullSource.text },
+      }).then((result) => {
+        if (stopped) return;
+        if (!result.item) throw new Error(result.error || "Could not save reading progress.");
+        reading = result.item;
+        checkpoint = startOffset;
+        playbackComplete = false;
+        controls.pauseButton.textContent = "Pause";
+        seekTo(0);
+      }).catch(() => setPlayerStatus(controls, "Could not save reading progress. Try again."))
+        .finally(() => { controls.pauseButton.disabled = false; });
       return;
     }
 
@@ -1127,6 +1239,7 @@ async function startPlayback(
         controls.pauseButton.textContent = "Play";
         setTransportState(controls, "paused");
         recordClientEvent("paused", getAudibleFrame() / SAMPLE_RATE * 1000);
+        persistProgress();
       }).catch(() => undefined);
     } else {
       void context.resume().then(() => {
@@ -1169,6 +1282,7 @@ async function startPlayback(
 
   const finishIfReady = (): void => {
     if (streamFinished && stretchFinished && sources.size === 0 && pendingFrameCount === 0 && !stopped) {
+      persistProgress(true);
       playbackComplete = true;
       highlighter?.clear();
       currentSentenceKey = "";
@@ -1402,6 +1516,7 @@ async function startPlayback(
         end: snapshot.offset + segment.end,
       })),
     ).sort((left, right) => left.start - right.start);
+    readingOffsets = mapReadingOffsets(spoken, segments);
     locatedWords = mapSentenceTimings(readingSource, spoken, segments);
     currentSentenceKey = "";
     const mappedWords = locatedWords.filter((word) => word.ranges.length);
@@ -1451,6 +1566,10 @@ async function startPlayback(
     }
 
     const now = performance.now();
+    if (now - lastProgressAt >= 5000) {
+      lastProgressAt = now;
+      persistProgress();
+    }
     if (now - lastBufferStatusAt >= 250) {
       lastBufferStatusAt = now;
       try {
@@ -1499,6 +1618,7 @@ async function startPlayback(
     message?: string;
     chunk_seq?: number;
     section_index?: number;
+    section_start_frame?: number;
     chunk_audio_offset_sec?: number;
     alignment?: { segments?: WordTiming[] } | null;
   }) => {
@@ -1509,6 +1629,10 @@ async function startPlayback(
     if (message.event === "audio" && message.audio_base64) {
       try {
         const sectionIndex = Number(message.section_index) || 0;
+        const section = sections[sectionIndex];
+        if (section && typeof message.section_start_frame === "number" && Number.isFinite(message.section_start_frame)) {
+          sectionOffsets.set(sectionIndex, { start: message.section_start_frame / SAMPLE_RATE, offset: spoken.sourceOffsets[section.start] ?? 0 });
+        }
         queueAudio(message.audio_base64, sectionIndex);
         if (typeof message.chunk_seq === "number" && message.alignment?.segments?.length) {
           alignmentsByChunk.set(`${sectionIndex}:${message.chunk_seq}`, {
@@ -1554,7 +1678,7 @@ async function startPlayback(
       referenceId: voice.id,
       source: source === "Article" ? "article" : "selection",
       text: spokenText,
-      sections: splitTextSections(spokenText),
+      sections,
       rate: playbackRate,
       textCharCount: spokenText.length,
       wordCount: spokenText.trim().split(/\s+/).length,

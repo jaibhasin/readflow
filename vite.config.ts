@@ -1,5 +1,5 @@
 import { cpSync, mkdirSync } from "node:fs";
-import { defineConfig } from "vite";
+import { build, defineConfig } from "vite";
 
 export default defineConfig({
   build: {
@@ -8,8 +8,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         background: "extension/background.ts",
-        content: "extension/content.ts",
         diagnostics: "extension/diagnostics.html",
+        readingList: "extension/reading-list.html",
       },
       output: {
         entryFileNames: "[name].js",
@@ -19,7 +19,16 @@ export default defineConfig({
   plugins: [
     {
       name: "copy-extension-manifest",
-      closeBundle() {
+      async closeBundle() {
+        // Chrome content scripts are classic scripts and cannot import shared chunks.
+        await build({
+          configFile: false,
+          build: {
+            emptyOutDir: false,
+            outDir: "dist",
+            lib: { entry: "extension/content.ts", name: "Readflow", formats: ["iife"], fileName: () => "content.js" },
+          },
+        });
         mkdirSync("dist", { recursive: true });
         cpSync("extension/manifest.json", "dist/manifest.json");
         cpSync("extension/highlight.css", "dist/highlight.css");
