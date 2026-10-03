@@ -107,9 +107,28 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
     void chrome.runtime.sendMessage({ type: "open_diagnostics" });
   });
 
+  const closeSpeedPanel = (): void => {
+    controls.speedPanel.hidden = true;
+    controls.speedButton.setAttribute("aria-expanded", "false");
+  };
+
   controls.speedButton.addEventListener("click", () => {
     controls.speedPanel.hidden = !controls.speedPanel.hidden;
     controls.speedButton.setAttribute("aria-expanded", String(!controls.speedPanel.hidden));
+    if (!controls.speedPanel.hidden) controls.speedSlider.focus({ preventScroll: true });
+  });
+
+  controls.speedValue.addEventListener("click", closeSpeedPanel);
+  document.addEventListener("pointerdown", (event) => {
+    const path = event.composedPath();
+    if (!path.includes(controls.speedPanel) && !path.includes(controls.speedButton)) closeSpeedPanel();
+  });
+  controls.speedPanel.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      closeSpeedPanel();
+      controls.speedButton.focus({ preventScroll: true });
+    }
   });
 
   controls.speedSlider.addEventListener("input", () => {
@@ -119,6 +138,7 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
     controls.speedButton.title = `Playback speed: ${selectedPlaybackRate} times`;
     controls.speedButton.setAttribute("aria-label", `Playback speed ${selectedPlaybackRate} times`);
     controls.speedValue.textContent = label;
+    controls.speedSlider.setAttribute("aria-valuetext", `${selectedPlaybackRate} times`);
     setCurrentPlaybackSpeed?.(selectedPlaybackRate);
   });
 
@@ -234,7 +254,7 @@ function createControls(): {
   speedButton: HTMLButtonElement;
   speedPanel: HTMLDivElement;
   speedSlider: HTMLInputElement;
-  speedValue: HTMLSpanElement;
+  speedValue: HTMLButtonElement;
   minimizeButton: HTMLButtonElement;
   expandButton: HTMLButtonElement;
   miniActionButton: HTMLButtonElement;
@@ -408,31 +428,30 @@ function createControls(): {
 
       #speed-panel {
         align-items: center;
-        background: linear-gradient(180deg, #354044, #20292c);
+        background: #20292c;
         border: 1px solid #667471;
         box-sizing: border-box;
         border-radius: 7px;
         box-shadow: 0 4px 12px rgb(0 0 0 / 38%), inset 0 1px rgb(255 255 255 / 9%);
         display: flex;
         gap: 7px;
-        height: 32px;
+        height: 28px;
         justify-content: space-between;
         padding: 0 8px;
         position: absolute;
-        right: 0;
+        left: 50%;
         top: 50%;
-        transform: translateY(-50%);
-        width: 204px;
+        transform: translate(-50%, -50%);
+        width: 146px;
         z-index: 2;
       }
 
       #speed-panel[hidden] { display: none; }
       #speed-track {
-        flex: 0 0 142px;
+        flex: 1;
         height: 22px;
         min-width: 0;
         position: relative;
-        width: 142px;
       }
 
       #speed-track::before {
@@ -440,7 +459,7 @@ function createControls(): {
         border-radius: 4px;
         content: "";
         height: 4px;
-        inset: 9px 7px auto;
+        inset: 9px 6.5px auto;
         position: absolute;
       }
 
@@ -489,14 +508,22 @@ function createControls(): {
         z-index: 1;
       }
 
-      .speed-tick:nth-child(5n + 1) { background: #a5b08e; height: 8px; top: 6px; }
+      .speed-tick-major { background: #a5b08e; height: 8px; top: 6px; }
 
       #speed-value {
+        background: transparent;
+        border: 0;
+        border-radius: 3px;
+        box-shadow: none;
         color: #dce9ac;
+        flex: 0 0 27px;
         font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-        min-width: 27px;
+        min-height: 22px;
+        padding: 0;
         text-align: center;
       }
+
+      #speed-value:hover { background: #354144; }
 
       #cassette-window {
         align-items: center;
@@ -809,12 +836,16 @@ function createControls(): {
           <span id="brand">READFLOW</span>
           <div id="header-actions">
             <div id="speed-control">
-              <button id="speed-button" type="button" title="Playback speed: 1 time" aria-label="Playback speed 1 time. Change speed" aria-expanded="false">1×</button>
+              <button id="speed-button" type="button" title="Playback speed: 1 time" aria-label="Playback speed 1 time. Change speed" aria-controls="speed-panel" aria-expanded="false">1×</button>
               <div id="speed-panel" role="group" aria-label="Playback speed" hidden>
-                <span id="speed-value">1×</span>
+                <button id="speed-value" type="button" title="Close speed control" aria-label="Close speed control">1×</button>
                 <div id="speed-track">
-                  ${Array.from({ length: 23 }, (_, index) => `<i class="speed-tick" aria-hidden="true" style="left:${((index + 1) * 0.1 - 0.75) / 2.25 * 100}%"></i>`).join("")}
-                  <input id="speed-slider" type="range" min="0.75" max="3" step="0.05" value="1" aria-label="Playback speed" />
+                  ${Array.from({ length: 23 }, (_, index) => {
+                    const rate = (index + 8) / 10;
+                    const position = (rate - 0.75) / 2.25;
+                    return `<i class="speed-tick${Number.isInteger(rate * 2) ? " speed-tick-major" : ""}" aria-hidden="true" style="left:calc(${position * 100}% + ${6.5 - position * 13}px)"></i>`;
+                  }).join("")}
+                  <input id="speed-slider" type="range" min="0.75" max="3" step="0.05" value="1" aria-label="Playback speed" aria-valuetext="1 time" />
                 </div>
               </div>
             </div>
@@ -865,7 +896,7 @@ function createControls(): {
     speedButton: shadow.querySelector<HTMLButtonElement>("#speed-button")!,
     speedPanel: shadow.querySelector<HTMLDivElement>("#speed-panel")!,
     speedSlider: shadow.querySelector<HTMLInputElement>("#speed-slider")!,
-    speedValue: shadow.querySelector<HTMLSpanElement>("#speed-value")!,
+    speedValue: shadow.querySelector<HTMLButtonElement>("#speed-value")!,
     minimizeButton: shadow.querySelector<HTMLButtonElement>("#minimize-button")!,
     expandButton: shadow.querySelector<HTMLButtonElement>("#expand-button")!,
     miniActionButton: shadow.querySelector<HTMLButtonElement>("#mini-action-button")!,
