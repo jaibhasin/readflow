@@ -244,9 +244,11 @@ function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
   pageSentenceHighlighter = {
     set(range, selectionRange) {
       highlight.clear();
-      selectedPassage.clear();
       selectedSentence.clear();
-      if (selectionRange) {
+      if (!selectionRange) {
+        selectedPassage.clear();
+      } else if (!selectedPassage.has(selectionRange)) {
+        selectedPassage.clear();
         selectedPassage.add(selectionRange);
       }
       if (range) {
