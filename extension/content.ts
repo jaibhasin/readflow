@@ -3,6 +3,7 @@ import { bufferFramesForSpeed, isAudioAudible, nextPlaybackRate, playbackDuratio
 import { StreamingTimeStretch } from "./time-stretch";
 import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenText } from "./spoken-text";
+import { splitTextSections } from "./text-sections";
 import { shortTapeTitle } from "./tape-label";
 import { foldCharacter, locateWordOffsets, normalizeForSearch, sentenceSpans } from "./text-map";
 
@@ -10,7 +11,7 @@ let stopCurrentPlayback: (() => void) | null = null;
 let setCurrentPlaybackSpeed: ((rate: number) => void) | null = null;
 let selectedPlaybackRate = 1;
 const SAMPLE_RATE = 44_100;
-const START_BUFFER_FRAMES = SAMPLE_RATE / 10;
+const START_BUFFER_SECONDS = 3;
 const articleText = getArticleText();
 let pageSentenceHighlighter: PageSentenceHighlighter | null = null;
 
@@ -856,7 +857,7 @@ async function startPlayback(
   let pageTextIndex: PageTextIndex | null = null;
   let sourceStart = -1;
   const highlighter = createPageSentenceHighlighter();
-  const alignmentsByChunk = new Map<number, ChunkAlignment>();
+  const alignmentsByChunk = new Map<string, ChunkAlignment>();
   let locatedWords: Array<{ sentenceKey: string; start: number; range: Range }> = [];
   let currentSentenceKey = "";
   let alignmentNeedsMapping = false;
@@ -867,7 +868,7 @@ async function startPlayback(
   const audioTimeline: Array<{ buffer: AudioBuffer; firstFrame: number }> = [];
   const pendingSamples: Float32Array<ArrayBuffer>[] = [];
   let pendingFrameCount = 0;
-  let pendingByte = new Uint8Array();
+  const pendingBytesBySection = new Map<number, Uint8Array>();
   let receivedFrames = 0;
   let seekStartFrame = 0;
   let pendingSeekFrame: number | null = null;
@@ -878,13 +879,16 @@ async function startPlayback(
   let processingTimer = 0;
   let processingEntry = 0;
   let processingOffset = 0;
-  const bufferFrames = (): number => bufferFramesForSpeed(START_BUFFER_FRAMES, playbackRate);
+  const bufferFrames = (): number => bufferFramesForSpeed(SAMPLE_RATE / 10, playbackRate);
+  const startupBufferFrames = (): number => Math.ceil(START_BUFFER_SECONDS * SAMPLE_RATE * playbackRate);
   let nextStart = 0;
   let streamFinished = false;
   let playbackComplete = false;
   let stopped = false;
   let animationFrame = 0;
   let playbackStarted = false;
+  let startupReady = false;
+  let lastBufferStatusAt = 0;
   const sessionId = crypto.randomUUID();
   const sessionStarted = performance.now();
 
@@ -1056,6 +1060,12 @@ async function startPlayback(
     }
   };
 
+  const startWhenBuffered = (): void => {
+    if (!startupReady && (receivedFrames >= startupBufferFrames() || streamFinished)) {
+      startupReady = true;
+    }
+  };
+
   const scheduleFromFrame = (targetFrame: number): void => {
     processingEntry = 0;
     processingOffset = 0;
@@ -1076,7 +1086,7 @@ async function startPlayback(
     audioTimeline.push({ buffer, firstFrame: receivedFrames });
     receivedFrames += samples.length;
     if (pendingSeekFrame !== null) {
-      const seek = resolveSeekTarget(pendingSeekFrame, receivedFrames, streamFinished, bufferFrames());
+      const seek = resolveSeekTarget(pendingSeekFrame, receivedFrames, streamFinished, startupBufferFrames());
       if (seek.waiting) {
         return;
       }
@@ -1085,7 +1095,8 @@ async function startPlayback(
       scheduleFromFrame(seek.targetFrame);
       return;
     }
-    if (!processingTimer) {
+    startWhenBuffered();
+    if (startupReady && !processingTimer) {
       processAvailableAudio();
     }
   };
@@ -1102,14 +1113,16 @@ async function startPlayback(
     pendingFrameCount = 0;
   };
 
-  const queueAudio = (audioBase64: string): void => {
+  const queueAudio = (audioBase64: string, sectionIndex: number): void => {
     const decoded = atob(audioBase64);
     const incoming = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+    const pendingByte = pendingBytesBySection.get(sectionIndex) || new Uint8Array();
     const combined = new Uint8Array(pendingByte.length + incoming.length);
     combined.set(pendingByte);
     combined.set(incoming, pendingByte.length);
     const completeLength = combined.length - (combined.length % 2);
-    pendingByte = combined.slice(completeLength);
+    if (completeLength === combined.length) pendingBytesBySection.delete(sectionIndex);
+    else pendingBytesBySection.set(sectionIndex, combined.slice(completeLength));
 
     if (completeLength === 0) {
       return;
@@ -1143,7 +1156,7 @@ async function startPlayback(
 
   const seekTo = (requestedFrame: number, recordSeek = true): void => {
     const { targetFrame, waiting } = resolveSeekTarget(
-      requestedFrame, receivedFrames, streamFinished, bufferFrames(),
+      requestedFrame, receivedFrames, streamFinished, startupBufferFrames(),
     );
     if (recordSeek) {
       recordClientEvent("seek", targetFrame / SAMPLE_RATE * 1000);
@@ -1158,6 +1171,7 @@ async function startPlayback(
     scheduledRanges.length = 0;
     seekStartFrame = targetFrame;
     stretch = new StreamingTimeStretch(playbackRate, SAMPLE_RATE);
+    startupReady = true;
     processedOutputFrames = 0;
     stretchFinished = false;
     pendingSeekFrame = waiting ? targetFrame : null;
@@ -1191,6 +1205,7 @@ async function startPlayback(
   setCurrentPlaybackSpeed = (rate) => {
     const frame = pendingSeekFrame ?? getAudibleFrame();
     playbackRate = rate;
+    port.postMessage({ type: "set_speed", rate });
     recordClientEvent("speed_changed", frame / SAMPLE_RATE * 1000, { rate });
     if (!playbackComplete) {
       seekTo(frame, false);
@@ -1295,6 +1310,17 @@ async function startPlayback(
       return;
     }
 
+    const now = performance.now();
+    if (now - lastBufferStatusAt >= 250) {
+      lastBufferStatusAt = now;
+      port.postMessage({
+        type: "buffer_status",
+        audibleFrame: pendingSeekFrame ?? getAudibleFrame(),
+        rate: playbackRate,
+        paused: context.state === "suspended",
+        pendingSeek: pendingSeekFrame !== null,
+      });
+    }
     if (scheduledRanges.length === 0) {
       animationFrame = requestAnimationFrame(updatePlaybackTime);
       return;
@@ -1327,6 +1353,7 @@ async function startPlayback(
     audio_base64?: string;
     message?: string;
     chunk_seq?: number;
+    section_index?: number;
     chunk_audio_offset_sec?: number;
     alignment?: { segments?: WordTiming[] } | null;
   }) => {
@@ -1336,9 +1363,10 @@ async function startPlayback(
 
     if (message.event === "audio" && message.audio_base64) {
       try {
-        queueAudio(message.audio_base64);
+        const sectionIndex = Number(message.section_index) || 0;
+        queueAudio(message.audio_base64, sectionIndex);
         if (typeof message.chunk_seq === "number" && message.alignment?.segments?.length) {
-          alignmentsByChunk.set(message.chunk_seq, {
+          alignmentsByChunk.set(`${sectionIndex}:${message.chunk_seq}`, {
             offset: typeof message.chunk_audio_offset_sec === "number" ? message.chunk_audio_offset_sec : 0,
             segments: message.alignment.segments,
           });
@@ -1347,8 +1375,13 @@ async function startPlayback(
       } catch {
         reportError("Readflow received invalid audio data.");
       }
+    } else if (message.event === "section_finish") {
+      const sectionIndex = Number(message.section_index) || 0;
+      if (pendingBytesBySection.get(sectionIndex)?.length) {
+        reportError("Fish Audio ended with an incomplete PCM sample.");
+      }
     } else if (message.event === "finish") {
-      if (pendingByte.length) {
+      if (pendingBytesBySection.size) {
         reportError("Fish Audio ended with an incomplete PCM sample.");
         return;
       }
@@ -1361,6 +1394,7 @@ async function startPlayback(
       if (pendingSeekFrame !== null) {
         seekTo(pendingSeekFrame);
       }
+      startWhenBuffered();
       if (!processingTimer) {
         processAvailableAudio();
       }
@@ -1376,6 +1410,8 @@ async function startPlayback(
       sessionId,
       source: source === "Article" ? "article" : "selection",
       text: spokenText,
+      sections: splitTextSections(spokenText),
+      rate: playbackRate,
       textCharCount: spokenText.length,
       wordCount: spokenText.trim().split(/\s+/).length,
       startedAt: new Date().toISOString(),

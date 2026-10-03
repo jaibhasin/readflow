@@ -31,7 +31,7 @@ function frequency(samples) {
   }
   return crossings * sampleRate / (end - start);
 }
-for (const speed of [0.75, 1, 1.1, 1.2, 1.3, 1.4, 1.5]) {
+for (const speed of [0.75, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 2, 3]) {
   test(`${speed}x changes duration while preserving a 220 Hz voice fundamental`, () => {
     const result = render(tone, speed, 997);
     assert.equal(result.length, Math.round(tone.length / speed));

@@ -7,10 +7,12 @@ Validated on 2026-10-03 in the Readflow worktree.
 - `/Users/jaibhasin/Desktop/readflow/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` passed both bridge tests.
 
 The DSP tests cover pitch and duration at every available speed, identical output across network chunk boundaries, exact original samples at 1×, short audio, and the final voiced tail.
-A 220 Hz input stayed within 2 Hz at speeds from 0.75× to 1.5×.
+A 220 Hz input stayed within 2 Hz at speeds from 0.75× through 3× in the synthetic signal tests.
+The text section tests verify ordered, lossless splitting, bounded long sections, and exact source offsets.
+Type checking, production build, all 33 JavaScript tests, and both bridge unit tests passed after adding parallel section requests.
 A local macOS speech sample lasted 12.937 seconds originally and 9.241 seconds at 1.4×.
 Autocorrelation measurements on 47 matched voiced windows found a median pitch of 149 Hz originally and 150 Hz after processing, with a median shift of zero semitones.
-These measurements establish pitch behavior, not subjective voice quality.
+These measurements establish pitch behavior, not subjective voice quality at 2× or 3×.
 
 A temporary local browser fixture ran the built `dist/content.js` with real Web Audio and a controlled PCM stream in place of the extension port.
 Four seconds of source audio produced 2.857 seconds of scheduled output at 1.4×.
