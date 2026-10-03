@@ -287,7 +287,7 @@ function createControls(): {
         background: linear-gradient(180deg, #485055, #30383d);
         border: 1px solid #626c70;
         border-bottom-color: #1c2225;
-        border-radius: 9px;
+        border-radius: 0 0 9px 9px;
         box-shadow: inset 0 1px rgb(255 255 255 / 12%), 0 2px 3px rgb(0 0 0 / 28%);
         color: inherit;
         cursor: pointer;
@@ -491,41 +491,46 @@ function createControls(): {
       }
 
       #tape-label {
-        color: #dfe9da;
+        background: linear-gradient(180deg, #eee8d6, #d9d1ba);
+        border: 1px solid #101719;
+        border-bottom: 3px solid #a4ad78;
+        border-radius: 8px 8px 0 0;
+        color: #30382f;
         display: flex;
         flex-direction: column;
         font: 700 9px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
-        gap: 2px;
-        max-width: 132px;
-        position: relative;
-        text-align: center;
-        text-shadow: 0 1px #101515;
+        gap: 5px;
+        padding: 10px 12px;
       }
 
       #tape-side {
-        color: #a5b17d;
-        font-size: 7px;
+        color: #59624d;
+        font-size: 8px;
         letter-spacing: 0.22em;
       }
 
-      #tape-title,
       #tape-site {
         display: block;
-        max-width: 132px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
       #tape-title {
-        color: #e9eee5;
-        font-size: 10px;
+        color: #26312d;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        font-size: 13px;
+        line-height: 1.35;
         letter-spacing: 0.01em;
       }
 
       #tape-site {
-        color: #a0aaa3;
-        font-size: 8px;
+        color: #59624d;
+        font-size: 9px;
         letter-spacing: 0.03em;
       }
 
@@ -580,9 +585,10 @@ function createControls(): {
       }
 
       #player-controls {
+        align-items: center;
         display: grid;
         gap: 6px;
-        grid-template-columns: 1fr 1.25fr 1fr 1fr;
+        grid-template-columns: 1fr 1.6fr 1fr 0.85fr;
         margin-top: 10px;
       }
 
@@ -601,11 +607,21 @@ function createControls(): {
         width: 8px;
       }
 
+      #stop-button {
+        background: #283234;
+        border-color: #53605d;
+        box-shadow: inset 0 1px rgb(255 255 255 / 5%);
+        color: #bec7c1;
+        font-size: 10px;
+      }
+
       #pause-button {
         background: linear-gradient(180deg, #dce9ac, #abbf78);
         border-color: #d8e6a5;
         border-bottom-color: #6a7e46;
         color: #263324;
+        min-height: 48px;
+        font-size: 14px;
       }
 
       #pause-button:hover {
@@ -717,13 +733,13 @@ function createControls(): {
             <button id="minimize-button" type="button" title="Minimize player" aria-label="Minimize Readflow player">−</button>
           </div>
         </div>
-        <div id="cassette-window" aria-hidden="true">
-          <span class="reel"></span>
-          <span id="tape-label">
+          <div id="tape-label">
             <span id="tape-side">SIDE A · RF-01</span>
             <span id="tape-title"></span>
             <span id="tape-site"></span>
-          </span>
+          </div>
+        <div id="cassette-window" aria-hidden="true">
+          <span class="reel"></span>
           <span class="reel"></span>
         </div>
         <div id="status" role="status" aria-live="polite">Ready to listen</div>
