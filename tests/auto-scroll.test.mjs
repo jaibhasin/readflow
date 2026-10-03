@@ -77,6 +77,17 @@ test("dragging or selecting text holds scrolling until release and the grace per
   f.scroller.dispose();
 });
 
+test("page navigation keys yield even while a player button has focus", () => {
+  const f = fixture();
+  f.document.querySelector("#player").dispatchEvent(new f.window.KeyboardEvent("keydown", { key: "PageUp", bubbles: true }));
+  f.follow();
+  assert.equal(f.scrolls.length, 0);
+  f.advance(4_000);
+  f.follow();
+  assert.equal(f.scrolls.length, 1);
+  f.scroller.dispose();
+});
+
 test("nested panels reveal their text without unnecessarily moving the outer page", () => {
   const f = fixture({ nested: true });
   f.follow();

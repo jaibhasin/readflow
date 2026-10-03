@@ -28,7 +28,7 @@ export function createReadingAutoScroller(view: Window, player: HTMLElement) {
   }, options);
   document.addEventListener("touchmove", yieldToReader, options);
   document.addEventListener("keydown", (event) => {
-    if (!isPlayerEvent(event) && SCROLL_KEYS.has(event.key)) yieldToReader();
+    if (SCROLL_KEYS.has(event.key)) yieldToReader();
   }, options);
   document.addEventListener("pointerdown", (event) => {
     if (isPlayerEvent(event)) return;
