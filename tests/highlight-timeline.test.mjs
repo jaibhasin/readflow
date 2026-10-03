@@ -19,6 +19,8 @@ test("repeated sentences highlight their own paragraph throughout the timeline",
   assert.equal(timings[2].ranges[0].startContainer.parentElement.id, "second");
   assert.equal(timings[3].ranges.map(range => range.toString()).join(""), "Keep going.");
   assert.notEqual(timings[0].sentenceKey, timings[2].sentenceKey);
+  assert.equal(timings[0].sourceOffset, 0);
+  assert.ok(timings[2].sourceOffset > timings[0].sourceOffset);
 });
 
 test("spoken cleanup does not shift the second identical sentence to the first", () => {
@@ -33,5 +35,6 @@ test("unmapped timestamps clear the cue rather than holding a previous sentence"
   const timings = timeline(document, ["Keep", "changed", "going"]);
   assert.ok(timings[0].ranges.length);
   assert.deepEqual(timings[1].ranges, []);
+  assert.equal(timings[1].sourceOffset, null);
   assert.deepEqual(timings[2].ranges, []);
 });
