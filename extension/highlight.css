@@ -3,9 +3,11 @@
 }
 
 ::highlight(readflow-selected-passage) {
-  background-color: rgba(96, 165, 250, 0.10) !important;
+  background-color: #315f9b !important;
+  color: #ffffff !important;
 }
 
 ::highlight(readflow-selected-sentence) {
-  background-color: rgba(96, 165, 250, 0.28) !important;
+  background-color: #fff1cc !important;
+  color: #252a34 !important;
 }
