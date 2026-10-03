@@ -106,3 +106,16 @@ test("source extraction preserves main's sentence boundaries before case-insensi
     "First sentence.", "Second sentence?", "Third sentence.",
   ]);
 });
+
+test("resuming a sliced source retains original DOM ranges across inline elements", async () => {
+  const { sliceReadingSource } = await import("../extension/reading-source.ts");
+  const document = new JSDOM("<p>First sentence. Second <strong>sentence</strong>. Third sentence.</p>").window.document;
+  const range = document.createRange();
+  range.selectNodeContents(document.querySelector("p"));
+  const full = createSelectionSource(range);
+  const source = sliceReadingSource(full, 16);
+  assert.equal(source.text, "Second sentence. Third sentence.");
+  assert.equal(sourceRanges(source, 0, 16).map(r => r.toString()).join(""), "Second sentence.");
+  assert.equal(sourceRanges(source, 7, 15)[0].startContainer.parentElement.tagName, "STRONG");
+  assert.equal(source.sentences[0].start, 0);
+});

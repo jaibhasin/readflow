@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "description": "Listen to articles and selected text while reading.",
   "action": {
-    "default_popup": "extension/diagnostics.html",
-    "default_title": "Readflow diagnostics"
+    "default_popup": "extension/reading-list.html",
+    "default_title": "Readflow reads"
   },
   "permissions": ["storage"],
   "host_permissions": ["http://127.0.0.1:4179/*"],

@@ -85,9 +85,31 @@ Changing speed or seeking reprocesses cached audio locally and does not request 
 Readflow converts inline ordinal math such as `$n^\text{th}$` to “nth” before sending it to Fish.
 Other formulas are left as written until Readflow has a reliable spoken form for them.
 
+## Pending and future reads
+
+Click the Readflow toolbar icon or **Reads** in the player to view your reading list.
+**In progress** shows unfinished articles and selected passages, the percentage read,
+words left, and estimated listening time remaining at 1× (180 words per minute).
+Progress follows the audio you have heard, including when you pause, stop, or seek.
+Readflow saves progress every five seconds and when you pause, stop, or leave the page.
+
+Choose **Save for later** in the article player or **Save current article** in the
+extension popup to add an article to **To read** without starting audio.
+Click a read card, **Resume**, or **Start reading** to open its source link in a new tab, then click
+**Resume read** or **Listen to article** in its player. Resuming starts at the
+beginning of the unfinished sentence. Selected passages can also be resumed.
+If an article's text changes, Readflow offers to start its current text rather
+than applying the old progress to different content.
+
+Finished listens move to **Completed reads**. **Read again** restarts them, and
+**Remove** deletes a read and its saved text. Text and progress stay in local
+extension storage in this browser profile; audio is not saved. Resuming generates
+new audio for the remaining text and requires the local bridge. Existing listens
+from before this feature are not added retroactively.
+
 ## View listen diagnostics
 
-Click **Debug** on an article page or the Readflow toolbar icon to see the last 10 listens, including the source, text and audio counts, and whether the request finished or stopped.
+Click **Debug** on an article page or in the reading list to see the last 10 listens, including the source, text and audio counts, and whether the request finished or stopped.
 The summary is saved only in this browser profile.
 Turn on **Record detailed trace for next listen** before listening to save the exact text, each Fish text fragment, provider timing, and returned word timestamps for one listen.
 Open a listen and expand its events to inspect the saved text and timestamp snapshots, or export that listen as JSON.
