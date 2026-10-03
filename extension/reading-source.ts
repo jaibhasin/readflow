@@ -1,5 +1,5 @@
 import { isProbablyReaderable, Readability } from "@mozilla/readability";
-import { normalizeForSearch, sentenceSpans } from "./text-map.ts";
+import { sentenceSpans } from "./text-map.ts";
 
 const SOURCE_ATTRIBUTE = "data-readflow-source-id";
 const BLOCK_SELECTOR = "p, h1, h2, h3, h4, h5, h6, li, blockquote, figcaption, td, th, dt, dd, pre, div, section, article, main";
@@ -68,7 +68,7 @@ function buildSource(parts: SourcePart[]): ReadingSource {
     }
   }
   text = text.trimEnd();
-  return { text, spans, sentences: sentenceSpans(normalizeForSearch(text), blockStarts) };
+  return { text, spans, sentences: sentenceSpans(text, blockStarts) };
 }
 
 export function createArticleSource(document: Document): ReadingSource | null {

@@ -23,7 +23,8 @@ Playback must stop searching the full page for the spoken text.
 
 Keep the existing sentence cue appearance, sentence segmentation policy, audio clock, seeking, and playback controls.
 Selection ranges become part of the source map, removing the need to clip page-wide ranges during playback.
-Changing highlight colors or sentence capitalization handling is a separate milestone.
+Changing highlight colors is a separate milestone.
+The PR integration preserves the sentence capitalization fix already merged into main.
 
 ## Commits
 

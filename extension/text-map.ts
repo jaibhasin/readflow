@@ -23,3 +23,10 @@ export function sentenceSpans(text: string, blockStarts: number[] = [0]): Array<
     })).filter((span) => span.start < span.end);
   });
 }
+
+export function createTextMap(text: string, blockStarts: number[] = [0]) {
+  return {
+    text: text.split("").map(foldCharacter).join(""),
+    sentences: sentenceSpans(text, blockStarts),
+  };
+}

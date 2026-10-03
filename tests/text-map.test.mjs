@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeForSearch, sentenceSpans } from "../extension/text-map.ts";
+import { createTextMap, normalizeForSearch, sentenceSpans } from "../extension/text-map.ts";
 import { alignSpokenWords } from "../extension/word-alignment.ts";
 
 test("groups words by sentence without including leading spaces", () => {
@@ -17,6 +17,32 @@ test("keeps headings and paragraphs separate when the DOM adds no whitespace", (
   const starts = blocks.map((_, index) => blocks.slice(0, index).join("").length);
   const sentences = sentenceSpans(text, starts).map(({ start, end }) => text.slice(start, end));
   assert.deepEqual(sentences, ["Title", "First sentence.", "Second sentence.", "Next heading", "Body sentence."]);
+});
+
+test("detects sentences before folding text for case-insensitive matching", () => {
+  const original = "First sentence. Second sentence? Third sentence.";
+  const index = createTextMap(original);
+  assert.equal(index.text, normalizeForSearch(original));
+  assert.deepEqual(index.sentences.map(({ start, end }) => original.slice(start, end)), [
+    "First sentence.", "Second sentence?", "Third sentence.",
+  ]);
+  assert.deepEqual(
+    alignSpokenWords(index.text, ["FIRST", "sentence", "second", "sentence", "Third", "sentence"]).filter((_, index) => index % 2 === 0),
+    index.sentences.map(({ start }) => start),
+  );
+});
+
+test("preserves character offsets and block boundaries when folding text", () => {
+  const original = "  İ nᵗʰ  Heading Body sentence.  ";
+  const bodyStart = original.indexOf("Body");
+  const index = createTextMap(original, [0, bodyStart]);
+  assert.equal(index.text, "  İ nth  heading body sentence.  ");
+  assert.equal(index.text.length, original.length);
+  assert.deepEqual(index.sentences, [
+    { start: 2, end: bodyStart - 1 },
+    { start: bodyStart, end: original.length - 2 },
+  ]);
+  assert.equal(index.text.slice(bodyStart, bodyStart + 4), "body");
 });
 
 test("matches spoken nth to rendered superscript text", () => {

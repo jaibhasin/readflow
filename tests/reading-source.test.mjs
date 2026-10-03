@@ -96,3 +96,13 @@ test("hidden text inside a selected sentence receives no highlight range", () =>
   assert.equal(ranges.map(range => range.toString()).join(""), "Keep going.");
   assert.equal(ranges.length, 2);
 });
+
+test("source extraction preserves main's sentence boundaries before case-insensitive alignment", () => {
+  const document = new JSDOM("<p>First sentence. Second sentence? Third sentence.</p>").window.document;
+  const selection = document.createRange();
+  selection.selectNodeContents(document.querySelector("p"));
+  const source = createSelectionSource(selection);
+  assert.deepEqual(source.sentences.map(({ start, end }) => source.text.slice(start, end)), [
+    "First sentence.", "Second sentence?", "Third sentence.",
+  ]);
+});
