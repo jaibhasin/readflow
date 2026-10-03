@@ -7,6 +7,8 @@ import { prepareSpokenSource } from "./spoken-text";
 import { splitTextSections } from "./text-sections";
 import { shortTapeTitle } from "./tape-label";
 import { extensionRuntime, RECONNECT_MESSAGE, sendExtensionMessage } from "./extension-runtime";
+import { createVoicePicker } from "./voice-picker";
+import { DEFAULT_VOICE, type FishVoice } from "./voices";
 
 let stopCurrentPlayback: (() => void) | null = null;
 let setCurrentPlaybackSpeed: ((rate: number) => void) | null = null;
@@ -15,6 +17,7 @@ const SAMPLE_RATE = 44_100;
 const START_BUFFER_SECONDS = 3;
 const initialArticleSource = createArticleSource(document);
 let pageSentenceHighlighter: PageSentenceHighlighter | null = null;
+const voicePickers = new WeakMap<HTMLElement, ReturnType<typeof createVoicePicker>>();
 
 type WordTiming = {
   text: string;
@@ -93,6 +96,8 @@ type TransportState = "idle" | "connecting" | "buffering" | "playing" | "paused"
 if (initialArticleSource && !document.getElementById("readflow-controls")) {
   const controls = createControls();
   document.documentElement.append(controls.host);
+  const voicePicker = createVoicePicker(controls.host.shadowRoot!, controls.dock);
+  voicePickers.set(controls.host, voicePicker);
 
   controls.articleButton.addEventListener("click", () => {
     const readingSource = createArticleSource(document);
@@ -116,6 +121,7 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
   };
 
   controls.speedButton.addEventListener("click", () => {
+    voicePicker.close();
     controls.speedPanel.hidden = !controls.speedPanel.hidden;
     controls.speedButton.setAttribute("aria-expanded", String(!controls.speedPanel.hidden));
     if (!controls.speedPanel.hidden) controls.speedSlider.focus({ preventScroll: true });
@@ -145,7 +151,10 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
     setCurrentPlaybackSpeed?.(selectedPlaybackRate);
   });
 
-  controls.minimizeButton.addEventListener("click", () => setCompactMode(controls, true));
+  controls.minimizeButton.addEventListener("click", () => {
+    voicePicker.close();
+    setCompactMode(controls, true);
+  });
   controls.expandButton.addEventListener("click", () => setCompactMode(controls, false));
   controls.miniActionButton.addEventListener("click", () => {
     if (controls.playerControls.hidden) {
@@ -621,10 +630,14 @@ function createControls(): {
 
       #tape-site {
         display: block;
+        flex: 1;
+        min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+
+      #tape-footer { align-items: center; display: flex; gap: 6px; justify-content: space-between; min-width: 0; }
 
       #tape-title {
         color: #26312d;
@@ -859,7 +872,7 @@ function createControls(): {
           <div id="tape-label">
             <span id="tape-side">SIDE A · RF-01</span>
             <span id="tape-title"></span>
-            <span id="tape-site"></span>
+            <div id="tape-footer"><span id="tape-site"></span></div>
           </div>
         <div id="cassette-window" aria-hidden="true">
           <span class="reel"></span>
@@ -975,6 +988,9 @@ async function startPlayback(
   source: string,
   selectionRange?: Range,
 ): Promise<void> {
+  const picker = voicePickers.get(controls.host);
+  await picker?.ready;
+  const voice: FishVoice = picker?.selectedVoice ?? DEFAULT_VOICE;
   stopCurrentPlayback?.();
   controls.playerControls.hidden = true;
   const spoken = prepareSpokenSource(readingSource.text);
@@ -1523,6 +1539,7 @@ async function startPlayback(
     port.postMessage({
       type: "start",
       sessionId,
+      referenceId: voice.id,
       source: source === "Article" ? "article" : "selection",
       text: spokenText,
       sections: splitTextSections(spokenText),
