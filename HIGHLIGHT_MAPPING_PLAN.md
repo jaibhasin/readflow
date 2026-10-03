@@ -28,3 +28,25 @@ Changing highlight colors or sentence capitalization handling is a separate mile
 ## Commits
 
 Commit this plan, the source extraction map, spoken-offset alignment, playback integration, and any browser-proven corrections separately.
+
+## Completed validation
+
+Source extraction, spoken-offset alignment, and playback integration are implemented.
+Regression tests cover repeated paragraphs, navigation duplicates, inline formatting, selections, whitespace, math cleanup, ambiguous word matches, changed DOM nodes, Readability retries, and hidden text.
+TypeScript checking and the production build pass.
+The actual built player was checked in the in-app browser using synthetic PCM and controlled timestamps.
+The first occurrence highlighted at 9 seconds, seeking forward highlighted the second at 24 seconds, and rewinding returned to the first.
+Selected-text playback highlighted only the second selected “Keep going.”
+The original page had zero temporary source-marker attributes.
+These browser checks validate mapping and controls; live Fish Audio synchronization has not been tested in this milestone.
+
+Run the local checks from the repository root:
+
+```sh
+npm run check
+npm run build
+node --experimental-strip-types --test tests/*.test.mjs
+```
+
+To try the extension, reload this checkout's built `dist/` extension in Chrome and refresh the article tab.
+Listen to an article with repeated sentences, then select its second occurrence and listen again.
