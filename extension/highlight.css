@@ -8,6 +8,7 @@
 }
 
 ::highlight(readflow-selected-sentence) {
-  background-color: #fff1cc !important;
-  color: #252a34 !important;
+  background-color: transparent !important;
+  color: #ffffff !important;
+  text-decoration: underline solid #ffe08a 2px !important;
 }
