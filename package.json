@@ -13,6 +13,7 @@
     "vite": "^6.3.5"
   },
   "dependencies": {
-    "@mozilla/readability": "^0.6.0"
+    "@mozilla/readability": "^0.6.0",
+    "soundtouchjs": "0.3.0"
   }
 }
