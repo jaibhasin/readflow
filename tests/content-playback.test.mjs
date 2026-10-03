@@ -204,3 +204,43 @@ test("save for later, player sizing, speed, pause, and seek preserve the current
   await f.click("stop-button");
   assert.equal(f.ports[0].disconnected, true);
 });
+
+test("replaying a completed listen restores progress and voice switching", async t => {
+  const f = await fixture();
+  t.after(f.close);
+  await f.click("article-button");
+  f.audio(4, true);
+  f.advance(4.1);
+  for (const audio of f.contexts[0].sources) audio.onended?.();
+  assert.equal(f.reads[0].status, "completed");
+  assert.equal(f.shadow.getElementById("dock").dataset.transport, "finished");
+  await f.click("pause-button");
+  assert.equal(f.reads[0].status, "in-progress");
+  assert.equal(f.ports.length, 1);
+  f.advance(4.4);
+  await f.chooseVoice("Mira");
+  assert.equal(f.ports.length, 2);
+  assert.equal(f.ports[1].sent.find(message => message.type === "start").referenceId, voices[1].id);
+});
+
+test("selected text stays separate from the article and its highlights clear on stop", async t => {
+  const f = await fixture();
+  t.after(f.close);
+  const range = f.window.document.createRange();
+  range.selectNodeContents(f.window.document.getElementById("second"));
+  f.window.getSelection().addRange(range);
+  f.window.document.dispatchEvent(new f.window.Event("selectionchange"));
+  await f.click("selection-button");
+  const start = f.ports[0].sent.find(message => message.type === "start");
+  assert.equal(start.source, "selection");
+  assert.match(start.text, /^Second passage/);
+  assert.equal(start.text.includes("First passage"), false);
+  assert.equal(f.reads[0].source, "selection");
+  f.audio();
+  f.advance(0.25);
+  assert.ok(f.window.CSS.highlights.get("readflow-selected-passage").size);
+  assert.ok(f.window.CSS.highlights.get("readflow-selected-sentence").size);
+  await f.click("stop-button");
+  assert.equal(f.window.CSS.highlights.get("readflow-selected-passage").size, 0);
+  assert.equal(f.window.CSS.highlights.get("readflow-selected-sentence").size, 0);
+});

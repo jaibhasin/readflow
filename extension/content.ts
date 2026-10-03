@@ -1136,6 +1136,7 @@ async function startPlayback(
         reading = result.item;
         checkpoint = startOffset;
         playbackComplete = false;
+        changePlaybackVoice = changeVoiceForSession;
         controls.pauseButton.textContent = "Pause";
         seekTo(0);
       }).catch(() => setPlayerStatus(controls, "Could not save reading progress. Try again."))
