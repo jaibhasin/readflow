@@ -1,3 +1,4 @@
+import { handleReadingMessage } from "./reading-list-background";
 import {
   appendTraceEvent,
   consumeDetailedCapture,
@@ -14,6 +15,11 @@ type StreamEvent = {
 };
 
 chrome.runtime.onMessage.addListener((message: { type?: string; query?: string; page?: number; voice?: unknown; favorite?: boolean }, _sender, sendResponse) => {
+  const readingResponse = handleReadingMessage(message as Record<string, unknown>, _sender);
+  if (readingResponse) {
+    void readingResponse.then(sendResponse);
+    return true;
+  }
   if (message.type === "open_diagnostics") {
     void chrome.tabs.create({ url: chrome.runtime.getURL("extension/diagnostics.html") });
   } else if (message.type === "list_voices") {

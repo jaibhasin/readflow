@@ -67,6 +67,9 @@ Keep the local bridge running while listening.
 On an article page, choose **Listen to article** to read the article.
 Select text and choose **Listen** to read only that selection.
 Use **Back 15 seconds**, **Pause**, **Forward 15 seconds**, or **Stop** in the small player while audio is playing.
+While audio plays, Readflow smoothly brings the spoken line into view only when it leaves a comfortable reading area, including inside scrollable article panels.
+Scrolling or interacting with the page gives you four seconds before automatic following resumes; dragging or selecting text holds it until you release.
+Automatic following rests while audio is paused or buffering and uses instant scrolling when your system requests reduced motion.
 The cassette label shows the article title and site, and its reels turn while audio is playing.
 Choose **−** to shrink the player to a compact view with status and play or pause, then **⌃** to expand it.
 The speed button cycles through 0.75×, 1×, 1.1×, 1.2×, 1.3×, 1.4×, 1.5×, 2×, and 3×.
@@ -85,9 +88,31 @@ Changing speed or seeking reprocesses cached audio locally and does not request 
 Readflow converts inline ordinal math such as `$n^\text{th}$` to “nth” before sending it to Fish.
 Other formulas are left as written until Readflow has a reliable spoken form for them.
 
+## Pending and future reads
+
+Click the Readflow toolbar icon or **Reads** in the player to view your reading list.
+**In progress** shows unfinished articles and selected passages, the percentage read,
+words left, and estimated listening time remaining at 1× (180 words per minute).
+Progress follows the audio you have heard, including when you pause, stop, or seek.
+Readflow saves progress every five seconds and when you pause, stop, or leave the page.
+
+Choose **Save for later** in the article player or **Save current article** in the
+extension popup to add an article to **To read** without starting audio.
+Click a read card, **Resume**, or **Start reading** to open its source link in a new tab, then click
+**Resume read** or **Listen to article** in its player. Resuming starts at the
+beginning of the unfinished sentence. Selected passages can also be resumed.
+If an article's text changes, Readflow offers to start its current text rather
+than applying the old progress to different content.
+
+Finished listens move to **Completed reads**. **Read again** restarts them, and
+**Remove** deletes a read and its saved text. Text and progress stay in local
+extension storage in this browser profile; audio is not saved. Resuming generates
+new audio for the remaining text and requires the local bridge. Existing listens
+from before this feature are not added retroactively.
+
 ## View listen diagnostics
 
-Click **Debug** on an article page or the Readflow toolbar icon to see the last 10 listens, including the source, text and audio counts, and whether the request finished or stopped.
+Click **Debug** on an article page or in the reading list to see the last 10 listens, including the source, text and audio counts, and whether the request finished or stopped.
 The summary is saved only in this browser profile.
 Turn on **Record detailed trace for next listen** before listening to save the exact text, each Fish text fragment, provider timing, and returned word timestamps for one listen.
 Open a listen and expand its events to inspect the saved text and timestamp snapshots, or export that listen as JSON.

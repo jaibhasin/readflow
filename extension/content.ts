@@ -1,5 +1,10 @@
+import { resumeOffset, type ReadingItem } from "./reading-list-store";
+import { mapReadingOffsets } from "./reading-progress";
+import { sentenceSpans } from "./text-map";
 import { mapSentenceTimings, type SentenceTiming } from "./highlight-timeline";
-import { createArticleSource, createSelectionSource, type ReadingSource } from "./reading-source";
+import { createPageHighlighter, type PageSentenceHighlighter } from "./page-highlighter";
+import { createArticleSource, createSelectionSource, sliceReadingSource, sourceRanges, type ReadingSource } from "./reading-source";
+import { createReadingAutoScroller } from "./auto-scroll";
 import { bufferFramesForSpeed, isAudioAudible, playbackDuration, playedFrames } from "./playback-speed";
 import { StreamingTimeStretch } from "./time-stretch";
 import { resolveSeekTarget } from "./seek-target";
@@ -36,67 +41,6 @@ type ChunkAlignment = {
   segments: WordTiming[];
 };
 
-type PageSentenceHighlighter = {
-  set(ranges: Range[], selectionRange?: Range): void;
-  clear(): void;
-};
-
-const SENTENCE_HIGHLIGHT_COLOR = "--readflow-current-sentence-highlight";
-
-function adaptiveSentenceHighlight(range: Range): string {
-  const layers: Array<{ red: number; green: number; blue: number; alpha: number }> = [];
-  let element = range.startContainer instanceof Element
-    ? range.startContainer
-    : range.startContainer.parentElement;
-
-  while (element) {
-    const match = getComputedStyle(element).backgroundColor.match(
-      /^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/,
-    );
-    if (match) {
-      const alphaValue = match[4] ?? "1";
-      const alpha = alphaValue.endsWith("%")
-        ? Number.parseFloat(alphaValue) / 100
-        : Number.parseFloat(alphaValue);
-      if (alpha > 0) {
-        layers.push({
-          red: Number(match[1]),
-          green: Number(match[2]),
-          blue: Number(match[3]),
-          alpha,
-        });
-      }
-    }
-    element = element.parentElement;
-  }
-
-  const pageScheme = getComputedStyle(document.documentElement).colorScheme;
-  const prefersDark = pageScheme.includes("dark") || matchMedia("(prefers-color-scheme: dark)").matches;
-  let background = prefersDark
-    ? { red: 24, green: 24, blue: 24 }
-    : { red: 255, green: 255, blue: 255 };
-  for (const layer of layers.reverse()) {
-    background = {
-      red: layer.red * layer.alpha + background.red * (1 - layer.alpha),
-      green: layer.green * layer.alpha + background.green * (1 - layer.alpha),
-      blue: layer.blue * layer.alpha + background.blue * (1 - layer.alpha),
-    };
-  }
-
-  const luminance = (channel: number): number => {
-    const normalized = channel / 255;
-    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
-  };
-  const relativeLuminance = 0.2126 * luminance(background.red)
-    + 0.7152 * luminance(background.green)
-    + 0.0722 * luminance(background.blue);
-
-  // Butter gold glows softly on dark pages; toasted honey stays distinct on light pages.
-  return relativeLuminance < 0.35
-    ? "rgba(255, 211, 128, 0.34)"
-    : "rgba(180, 116, 23, 0.24)";
-}
-
 type TransportState = "idle" | "connecting" | "buffering" | "playing" | "paused" | "finished" | "stopped" | "error";
 
 if (initialArticleSource && !document.getElementById("readflow-controls")) {
@@ -105,10 +49,59 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
   const voicePicker = createVoicePicker(controls.host.shadowRoot!, controls.dock, (voice) => changePlaybackVoice?.(voice));
   voicePickers.set(controls.host, voicePicker);
 
-  controls.articleButton.addEventListener("click", () => {
+  let savedRead: ReadingItem | undefined;
+  const readingLookup = sendExtensionMessage<{ item?: ReadingItem; error?: string }>({ type: "reading_for_page" }).then((result) => {
+    savedRead = result.item;
+    if (savedRead?.status === "in-progress") controls.articleButton.textContent = "Resume read";
+    else if (savedRead?.source === "selection") controls.articleButton.textContent = "Listen to saved passage";
+  }).catch(() => undefined);
+
+  const saveForLater = async (): Promise<{ ok?: boolean; error?: string }> => {
+    const article = createArticleSource(document);
+    if (!article) return { error: "This page no longer has readable article text." };
+    const result = await sendExtensionMessage<{ item?: ReadingItem; error?: string }>({
+      type: "reading_save", item: { url: location.href, title: document.title, source: "article", text: article.text },
+    });
+    if (result.error) return { error: result.error };
+    controls.saveButton.textContent = "Saved for later";
+    return { ok: true };
+  };
+  controls.saveButton.addEventListener("click", () => {
+    controls.saveButton.disabled = true;
+    void saveForLater().then((result) => {
+      setPlayerStatus(controls, result.error || "Saved for later");
+      controls.status.hidden = false;
+    }).catch(() => setPlayerStatus(controls, RECONNECT_MESSAGE)).finally(() => { controls.saveButton.disabled = false; });
+  });
+  controls.readsButton.addEventListener("click", () => {
+    void sendExtensionMessage({ type: "open_reading_list" }).catch(() => setPlayerStatus(controls, RECONNECT_MESSAGE));
+  });
+  extensionRuntime().onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.type !== "save_read") return;
+    void saveForLater().then(sendResponse).catch(() => sendResponse({ error: RECONNECT_MESSAGE }));
+    return true;
+  });
+
+  controls.articleButton.addEventListener("click", async () => {
+    await readingLookup;
     const readingSource = createArticleSource(document);
     if (readingSource) {
-      void startPlayback(controls, readingSource, "Article");
+      const resume = savedRead;
+      savedRead = undefined;
+      controls.articleButton.textContent = "Listen to article";
+      if (resume?.source === "selection") {
+        const start = readingSource.text.indexOf(resume.text);
+        const selection = start >= 0 ? sliceReadingSource(readingSource, start, start + resume.text.length)
+          : { text: resume.text, spans: [], sentences: sentenceSpans(resume.text) };
+        void startPlayback(controls, selection, "Selected text", undefined, {}, resume);
+      } else {
+        if (resume && resume.text !== readingSource.text) {
+          setPlayerStatus(controls, "This article has changed. Choose Listen to article to start its current text.");
+          controls.status.hidden = false;
+          return;
+        }
+        void startPlayback(controls, readingSource, "Article", undefined, {}, resume);
+      }
     } else {
       setPlayerStatus(controls, "This page no longer has readable article text.");
       controls.status.hidden = false;
@@ -224,57 +217,7 @@ function sourceAfterOffset(source: ReadingSource, offset: number): ReadingSource
 }
 
 function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
-  if (pageSentenceHighlighter) {
-    return pageSentenceHighlighter;
-  }
-
-  type HighlightValue = Set<Range> & { priority: number };
-  type HighlightRegistry = { set(name: string, value: HighlightValue): void };
-  const registry = (CSS as unknown as { highlights?: HighlightRegistry }).highlights;
-  const HighlightConstructor = (window as unknown as {
-    Highlight?: new (...ranges: Range[]) => HighlightValue;
-  }).Highlight;
-  if (!registry || !HighlightConstructor) {
-    return null;
-  }
-
-  const name = "readflow-current-sentence";
-  const highlight = new HighlightConstructor();
-  const selectedPassage = new HighlightConstructor();
-  const selectedSentence = new HighlightConstructor();
-  selectedSentence.priority = 1;
-  registry.set(name, highlight);
-  registry.set("readflow-selected-passage", selectedPassage);
-  registry.set("readflow-selected-sentence", selectedSentence);
-  pageSentenceHighlighter = {
-    set(ranges, selectionRange) {
-      if (ranges.length && !selectionRange) {
-        document.documentElement.style.setProperty(
-          SENTENCE_HIGHLIGHT_COLOR,
-          adaptiveSentenceHighlight(ranges[0]),
-        );
-      } else if (!selectionRange) {
-        document.documentElement.style.removeProperty(SENTENCE_HIGHLIGHT_COLOR);
-      }
-      highlight.clear();
-      selectedSentence.clear();
-      if (!selectionRange) {
-        selectedPassage.clear();
-      } else if (!selectedPassage.has(selectionRange)) {
-        selectedPassage.clear();
-        selectedPassage.add(selectionRange);
-      }
-      for (const range of ranges) {
-        (selectionRange ? selectedSentence : highlight).add(range);
-      }
-    },
-    clear() {
-      highlight.clear();
-      selectedPassage.clear();
-      selectedSentence.clear();
-      document.documentElement.style.removeProperty(SENTENCE_HIGHLIGHT_COLOR);
-    },
-  };
+  pageSentenceHighlighter ??= createPageHighlighter(document);
   return pageSentenceHighlighter;
 }
 
@@ -285,6 +228,8 @@ function createControls(): {
   miniPlayer: HTMLDivElement;
   articleButton: HTMLButtonElement;
   debugButton: HTMLButtonElement;
+  saveButton: HTMLButtonElement;
+  readsButton: HTMLButtonElement;
   speedButton: HTMLButtonElement;
   speedPanel: HTMLDivElement;
   speedSlider: HTMLInputElement;
@@ -410,6 +355,10 @@ function createControls(): {
         animation: power-glow 1.8s ease-in-out infinite;
       }
 
+      #save-actions { display: flex; gap: 8px; margin-top: 12px; border-top: 1px solid #46534f; padding-top: 9px; }
+      #save-actions button { flex: 1; font-size: 11px; padding: 5px 8px; min-height: 30px; border-radius: 6px; background: #273234; border-color: #53615d; box-shadow: inset 0 1px rgb(255 255 255 / 5%); color: #c6d2c8; }
+      #save-actions button:hover { background: #354144; border-color: #819076; color: #e4edc0; }
+      #save-button::before { content: "+"; color: #d6e986; margin-right: 6px; font: 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
       #debug-button {
         background: transparent;
         border: 0;
@@ -908,6 +857,7 @@ function createControls(): {
           <button id="stop-button" type="button">Stop</button>
         </div>
         <button id="article-button" type="button">Listen to article</button>
+        <div id="save-actions"><button id="save-button" type="button">Save for later</button><button id="reads-button" type="button">Reads</button></div>
         </div>
         <div id="mini-player" hidden>
           <span id="mini-mark" aria-hidden="true">RF</span>
@@ -931,6 +881,8 @@ function createControls(): {
     miniPlayer: shadow.querySelector<HTMLDivElement>("#mini-player")!,
     articleButton: shadow.querySelector<HTMLButtonElement>("#article-button")!,
     debugButton: shadow.querySelector<HTMLButtonElement>("#debug-button")!,
+    saveButton: shadow.querySelector<HTMLButtonElement>("#save-button")!,
+    readsButton: shadow.querySelector<HTMLButtonElement>("#reads-button")!,
     speedButton: shadow.querySelector<HTMLButtonElement>("#speed-button")!,
     speedPanel: shadow.querySelector<HTMLDivElement>("#speed-panel")!,
     speedSlider: shadow.querySelector<HTMLInputElement>("#speed-slider")!,
@@ -1010,16 +962,35 @@ async function startPlayback(
   source: string,
   selectionRange?: Range,
   options: { sourceOffset?: number; elapsedSeconds?: number; voice?: FishVoice; resumePaused?: boolean; startBufferSeconds?: number } = {},
+  savedRead?: ReadingItem,
 ): Promise<void> {
   const picker = voicePickers.get(controls.host);
   await picker?.ready;
   const voice: FishVoice = options.voice ?? picker?.selectedVoice ?? DEFAULT_VOICE;
   stopCurrentPlayback?.();
   controls.playerControls.hidden = true;
-  const playbackSource = options.sourceOffset ? sourceAfterOffset(readingSource, options.sourceOffset) : readingSource;
+  const sessionId = crypto.randomUUID();
+  const fullSource = readingSource;
+  let reading: ReadingItem;
+  try {
+    const result = await sendExtensionMessage<{ item?: ReadingItem; error?: string }>({
+      type: "reading_save", sessionId,
+      item: { url: location.href, title: document.title, source: source === "Article" ? "article" : "selection", text: fullSource.text },
+    });
+    if (!result.item) throw new Error(result.error || "Could not save reading progress.");
+    reading = result.item;
+  } catch (error) {
+    setPlayerStatus(controls, error instanceof Error ? error.message : "Could not save reading progress.");
+    controls.status.hidden = false;
+    return;
+  }
+  const startOffset = options.sourceOffset ?? (savedRead?.status !== "completed" ? resumeOffset(fullSource.text, reading.offset) : 0);
+  const playbackSource = startOffset ? sourceAfterOffset(fullSource, startOffset) : fullSource;
   if (!playbackSource.text) return;
+  let checkpoint = startOffset;
   const spoken = prepareSpokenSource(playbackSource.text);
   const spokenText = spoken.text;
+  const sections = splitTextSections(spokenText);
   controls.tapeTitle.textContent = source === "Selected text" ? "Selected passage" : shortTapeTitle(document.title);
   controls.tapeTitle.title = controls.tapeTitle.textContent;
   setTransportState(controls, "connecting");
@@ -1046,12 +1017,15 @@ async function startPlayback(
     return;
   }
   const highlighter = createPageSentenceHighlighter();
+  const autoScroller = createReadingAutoScroller(window, controls.host);
   if (highlighter && selectionRange) {
     highlighter.set([], selectionRange);
     window.getSelection()?.removeAllRanges();
   }
   const alignmentsByChunk = new Map<string, ChunkAlignment>();
   let locatedWords: SentenceTiming[] = [];
+  let readingOffsets: Array<{ start: number; offset: number }> = [];
+  const sectionOffsets = new Map<number, { start: number; offset: number }>();
   let currentSentenceKey = "";
   let alignmentNeedsMapping = false;
   let didReportHighlightMapping = false;
@@ -1082,10 +1056,10 @@ async function startPlayback(
   let playbackStarted = false;
   let startupReady = false;
   let lastBufferStatusAt = 0;
-  const sessionId = crypto.randomUUID();
   const sessionStarted = performance.now();
   const elapsedBeforeSession = options.elapsedSeconds ?? 0;
   let changeVoiceForSession: (voice: FishVoice) => void;
+  let lastProgressAt = 0;
 
   const recordClientEvent = (kind: string, playbackMs?: number, value?: unknown): void => {
     try {
@@ -1105,17 +1079,36 @@ async function startPlayback(
     recordClientEvent("highlight_api_unavailable");
   }
 
+  const persistProgress = (completed = false): void => {
+    if (alignmentNeedsMapping) { rebuildWordRanges(); alignmentNeedsMapping = false; }
+    const seconds = getAudibleFrame() / SAMPLE_RATE;
+    let current: { start: number; offset: number } | undefined;
+    for (const word of [...sectionOffsets.values(), ...readingOffsets].sort((a, b) => a.start - b.start)) {
+      if (word.start > seconds) break;
+      current = word;
+    }
+    if (current && seconds > 0) checkpoint = startOffset + current.offset;
+    void sendExtensionMessage<{ error?: string }>({ type: "reading_progress", id: reading.id, sessionId, offset: checkpoint, completed })
+      .then((result) => { if (result.error) setPlayerStatus(controls, result.error); })
+      .catch(() => setPlayerStatus(controls, "Reading progress could not be saved. Refresh this tab to reconnect."));
+  };
+  const pageHide = (): void => { cleanup(); };
+  window.addEventListener("pagehide", pageHide);
+
   const cleanup = (recordStop = true): void => {
     if (stopped) {
       return;
     }
 
+    if (!playbackComplete) persistProgress();
+    window.removeEventListener("pagehide", pageHide);
     stopped = true;
     setCurrentPlaybackSpeed = null;
     if (changePlaybackVoice === changeVoiceForSession) changePlaybackVoice = null;
     cancelAnimationFrame(animationFrame);
     window.clearTimeout(processingTimer);
     highlighter?.clear();
+    autoScroller.dispose();
     if (recordStop && !playbackComplete) {
       recordClientEvent("stopped", getAudibleFrame() / SAMPLE_RATE * 1000);
     }
@@ -1133,9 +1126,20 @@ async function startPlayback(
   controls.pauseButton.textContent = options.resumePaused ? "Play" : "Pause";
   controls.pauseButton.onclick = () => {
     if (playbackComplete) {
-      playbackComplete = false;
-      controls.pauseButton.textContent = "Pause";
-      seekTo(0);
+      controls.pauseButton.disabled = true;
+      void sendExtensionMessage<{ item?: ReadingItem; error?: string }>({
+        type: "reading_save", sessionId,
+        item: { url: location.href, title: document.title, source: reading.source, text: fullSource.text },
+      }).then((result) => {
+        if (stopped) return;
+        if (!result.item) throw new Error(result.error || "Could not save reading progress.");
+        reading = result.item;
+        checkpoint = startOffset;
+        playbackComplete = false;
+        controls.pauseButton.textContent = "Pause";
+        seekTo(0);
+      }).catch(() => setPlayerStatus(controls, "Could not save reading progress. Try again."))
+        .finally(() => { controls.pauseButton.disabled = false; });
       return;
     }
 
@@ -1147,6 +1151,7 @@ async function startPlayback(
         controls.pauseButton.textContent = "Play";
         setTransportState(controls, "paused");
         recordClientEvent("paused", getAudibleFrame() / SAMPLE_RATE * 1000);
+        persistProgress();
       }).catch(() => undefined);
     } else {
       void context.resume().then(() => {
@@ -1186,10 +1191,10 @@ async function startPlayback(
     if (stopped) return;
     const frame = pendingSeekFrame ?? getAudibleFrame();
     const currentSeconds = frame / SAMPLE_RATE;
-    let sourceOffset = options.sourceOffset ?? 0;
+    let sourceOffset = startOffset;
     for (const word of locatedWords) {
       if (word.start > currentSeconds) break;
-      if (word.sourceOffset !== null) sourceOffset = (options.sourceOffset ?? 0) + word.sourceOffset;
+      if (word.sourceOffset !== null) sourceOffset = startOffset + word.sourceOffset;
     }
     const resumePaused = context.state === "suspended";
     cleanup(false);
@@ -1212,6 +1217,7 @@ async function startPlayback(
 
   const finishIfReady = (): void => {
     if (streamFinished && stretchFinished && sources.size === 0 && pendingFrameCount === 0 && !stopped) {
+      persistProgress(true);
       playbackComplete = true;
       if (changePlaybackVoice === changeVoiceForSession) changePlaybackVoice = null;
       highlighter?.clear();
@@ -1447,6 +1453,7 @@ async function startPlayback(
       })),
     ).sort((left, right) => left.start - right.start);
     locatedWords = mapSentenceTimings(playbackSource, spoken, segments);
+    readingOffsets = mapReadingOffsets(spoken, segments);
     currentSentenceKey = "";
     const mappedWords = locatedWords.filter((word) => word.ranges.length);
     const mismatch = locatedWords.find((word) => !word.ranges.length);
@@ -1463,7 +1470,7 @@ async function startPlayback(
     }
   };
 
-  const updateSentenceHighlight = (playbackSeconds: number): void => {
+  const updateSentenceHighlight = (playbackSeconds: number, playing: boolean): void => {
     let word: (typeof locatedWords)[number] | undefined;
     for (const candidate of locatedWords) {
       if (candidate.start > playbackSeconds) {
@@ -1472,6 +1479,10 @@ async function startPlayback(
       word = candidate;
     }
 
+    if (playing && word?.ranges.length && word.sourceOffset !== null) {
+      const offset = word.sourceOffset;
+      autoScroller.follow(() => sourceRanges(readingSource, offset, offset + 1));
+    }
     if (!word || !highlighter) {
       highlighter?.set([], selectionRange);
       currentSentenceKey = "";
@@ -1491,6 +1502,10 @@ async function startPlayback(
     }
 
     const now = performance.now();
+    if (now - lastProgressAt >= 5000) {
+      lastProgressAt = now;
+      persistProgress();
+    }
     if (now - lastBufferStatusAt >= 250) {
       lastBufferStatusAt = now;
       try {
@@ -1524,7 +1539,7 @@ async function startPlayback(
       playbackStarted = true;
       recordClientEvent("playback_started", frame / SAMPLE_RATE * 1000);
     }
-    updateSentenceHighlight(frame / SAMPLE_RATE);
+    updateSentenceHighlight(frame / SAMPLE_RATE, hasAudibleAudio && context.state === "running");
     controls.rewindButton.disabled = frame <= 0;
     controls.forwardButton.disabled = streamFinished && frame >= receivedFrames;
     const seconds = Math.max(0, frame / SAMPLE_RATE);
@@ -1539,6 +1554,7 @@ async function startPlayback(
     message?: string;
     chunk_seq?: number;
     section_index?: number;
+    section_start_frame?: number;
     chunk_audio_offset_sec?: number;
     alignment?: { segments?: WordTiming[] } | null;
   }) => {
@@ -1549,6 +1565,10 @@ async function startPlayback(
     if (message.event === "audio" && message.audio_base64) {
       try {
         const sectionIndex = Number(message.section_index) || 0;
+        const section = sections[sectionIndex];
+        if (section && typeof message.section_start_frame === "number" && Number.isFinite(message.section_start_frame)) {
+          sectionOffsets.set(sectionIndex, { start: message.section_start_frame / SAMPLE_RATE, offset: spoken.sourceOffsets[section.start] ?? 0 });
+        }
         queueAudio(message.audio_base64, sectionIndex);
         if (typeof message.chunk_seq === "number" && message.alignment?.segments?.length) {
           alignmentsByChunk.set(`${sectionIndex}:${message.chunk_seq}`, {
@@ -1594,7 +1614,7 @@ async function startPlayback(
       referenceId: voice.id,
       source: source === "Article" ? "article" : "selection",
       text: spokenText,
-      sections: splitTextSections(spokenText),
+      sections,
       rate: playbackRate,
       textCharCount: spokenText.length,
       wordCount: spokenText.trim().split(/\s+/).length,
