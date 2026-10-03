@@ -11,7 +11,7 @@ export function mapSentenceTimings(
 ): SentenceTiming[] {
   const offsets = alignSpokenWords(spoken.text, segments.map((segment) => segment.text));
   const cachedRanges = new Map<string, Range[]>();
-  return segments.flatMap((segment, index) => {
+  return segments.flatMap<SentenceTiming>((segment, index) => {
     if (!Number.isFinite(segment.start) || !Number.isFinite(segment.end)) {
       return [];
     }

@@ -3,7 +3,7 @@ import { mapReadingOffsets } from "./reading-progress";
 import { sentenceSpans } from "./text-map";
 import { mapSentenceTimings, type SentenceTiming } from "./highlight-timeline";
 import { createPageHighlighter, type PageSentenceHighlighter } from "./page-highlighter";
-import { createArticleSource, createSelectionSource, sliceReadingSource, sourceRanges, type ReadingSource } from "./reading-source";
+import { createArticleSource, createSelectionSource, selectedWordOffset, sliceReadingSource, sourceRanges, type ReadingSource } from "./reading-source";
 import { createReadingAutoScroller } from "./auto-scroll";
 import { bufferFramesForSpeed, isAudioAudible, playbackDuration, playedFrames } from "./playback-speed";
 import { StreamingTimeStretch } from "./time-stretch";
@@ -11,7 +11,7 @@ import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenSource } from "./spoken-text";
 import { splitTextSections } from "./text-sections";
 import { shortTapeTitle } from "./tape-label";
-import { extensionRuntime, RECONNECT_MESSAGE, sendExtensionMessage } from "./extension-runtime";
+import { connectionErrorMessage, extensionRuntime, RECONNECT_MESSAGE, sendExtensionMessage } from "./extension-runtime";
 import { createVoicePicker } from "./voice-picker";
 import type { FishVoice } from "./voices";
 
@@ -961,7 +961,7 @@ async function startPlayback(
   readingSource: ReadingSource,
   source: string,
   selectionRange?: Range,
-  options: { sourceOffset?: number; elapsedSeconds?: number; voice?: FishVoice; resumePaused?: boolean; startBufferSeconds?: number } = {},
+  options: { sourceOffset?: number; elapsedSeconds?: number; voice?: FishVoice; resumePaused?: boolean; startBufferSeconds?: number; recoveryAttempts?: number } = {},
   savedRead?: ReadingItem,
 ): Promise<void> {
   const picker = voicePickers.get(controls.host);
@@ -1002,7 +1002,7 @@ async function startPlayback(
     port = extensionRuntime().connect({ name: "readflow-tts" });
   } catch {
     setTransportState(controls, "error");
-    setPlayerStatus(controls, RECONNECT_MESSAGE);
+    setPlayerStatus(controls, connectionErrorMessage(typeof chrome === "undefined" ? undefined : chrome.runtime));
     return;
   }
 
@@ -1050,6 +1050,7 @@ async function startPlayback(
   const startupBufferFrames = (): number => Math.ceil((options.startBufferSeconds ?? START_BUFFER_SECONDS) * SAMPLE_RATE * playbackRate);
   let nextStart = 0;
   let streamFinished = false;
+  let portConnected = true;
   let playbackComplete = false;
   let stopped = false;
   let animationFrame = 0;
@@ -1103,6 +1104,7 @@ async function startPlayback(
     if (!playbackComplete) persistProgress();
     window.removeEventListener("pagehide", pageHide);
     stopped = true;
+    document.removeEventListener("dblclick", onArticleDoubleClick);
     setCurrentPlaybackSpeed = null;
     if (changePlaybackVoice === changeVoiceForSession) changePlaybackVoice = null;
     cancelAnimationFrame(animationFrame);
@@ -1212,8 +1214,26 @@ async function startPlayback(
   changePlaybackVoice = changeVoiceForSession;
 
   port.onDisconnect.addListener(() => {
-    const error = chrome.runtime?.lastError;
-    if (!stopped && (!streamFinished || error)) reportError(RECONNECT_MESSAGE);
+    void chrome.runtime?.lastError;
+    portConnected = false;
+    if (stopped || streamFinished) return;
+    if (!chrome.runtime?.id || (options.recoveryAttempts ?? 0) >= 1) {
+      reportError(connectionErrorMessage(chrome.runtime));
+      return;
+    }
+
+    // Recover from an unexpected worker restart at the current word. Preserve
+    // pause state and the original source so later double-clicks can seek backward.
+    if (alignmentNeedsMapping) rebuildWordRanges();
+    const seconds = getAudibleFrame() / SAMPLE_RATE;
+    const currentWord = [...locatedWords].reverse().find((word) => word.start <= seconds && word.sourceOffset !== null);
+    const sourceOffset = startOffset + (currentWord?.sourceOffset ?? 0);
+    const resumePaused = context.state === "suspended";
+    cleanup(false);
+    void startPlayback(controls, readingSource, source, selectionRange, {
+      sourceOffset, resumePaused, voice, elapsedSeconds: elapsedBeforeSession + seconds,
+      recoveryAttempts: (options.recoveryAttempts ?? 0) + 1,
+    });
   });
 
   const finishIfReady = (): void => {
@@ -1432,11 +1452,41 @@ async function startPlayback(
     seekTo((pendingSeekFrame ?? getAudibleFrame()) + seconds * SAMPLE_RATE);
   };
 
+  const onArticleDoubleClick = (event: MouseEvent): void => {
+    if (stopped || source !== "Article") return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (event.composedPath().includes(controls.host) || target?.closest(
+      "a, button, input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='button'], [role='textbox']",
+    )) return;
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const offset = selectedWordOffset(readingSource, selection.getRangeAt(0));
+    if (offset === null) return;
+    if (alignmentNeedsMapping) {
+      rebuildWordRanges();
+      alignmentNeedsMapping = false;
+    }
+    const word = locatedWords.find((candidate) => candidate.sourceOffset !== null && startOffset + candidate.sourceOffset === offset);
+    selection.removeAllRanges();
+    controls.selectionButton.hidden = true;
+    recordClientEvent("word_seek", word ? word.start * 1000 : undefined, { source_offset: offset });
+    if (word) {
+      // Cached words use their exact audio timestamp. Double-click also resumes a pause.
+      seekTo(word.start * SAMPLE_RATE);
+      void context.resume().catch(() => reportError("Audio playback could not resume. Try again."));
+    } else {
+      // Do not generate all skipped paragraphs just to reach a word with no audio yet.
+      cleanup();
+      void startPlayback(controls, readingSource, source, undefined, { sourceOffset: offset, voice });
+    }
+  };
+  document.addEventListener("dblclick", onArticleDoubleClick);
+
   setCurrentPlaybackSpeed = (rate) => {
     const frame = pendingSeekFrame ?? getAudibleFrame();
     playbackRate = rate;
-    try { port.postMessage({ type: "set_speed", rate }); } catch {
-      reportError(RECONNECT_MESSAGE);
+    try { if (portConnected) port.postMessage({ type: "set_speed", rate }); } catch {
+      reportError(connectionErrorMessage(chrome.runtime));
       return;
     }
     recordClientEvent("speed_changed", frame / SAMPLE_RATE * 1000, { rate });
@@ -1507,7 +1557,7 @@ async function startPlayback(
       lastProgressAt = now;
       persistProgress();
     }
-    if (now - lastBufferStatusAt >= 250) {
+    if (portConnected && !streamFinished && now - lastBufferStatusAt >= 250) {
       lastBufferStatusAt = now;
       try {
         port.postMessage({
@@ -1518,7 +1568,7 @@ async function startPlayback(
         pendingSeek: pendingSeekFrame !== null,
         });
       } catch {
-        reportError(RECONNECT_MESSAGE);
+        reportError(connectionErrorMessage(chrome.runtime));
         return;
       }
     }
@@ -1610,6 +1660,7 @@ async function startPlayback(
   try {
     if (options.resumePaused) await context.suspend();
     else await context.resume();
+    if (stopped) return;
     port.postMessage({
       type: "start",
       sessionId,
@@ -1622,11 +1673,14 @@ async function startPlayback(
       wordCount: spokenText.trim().split(/\s+/).length,
       startedAt: new Date().toISOString(),
     });
+    if (options.resumePaused) {
+      port.postMessage({ type: "buffer_status", audibleFrame: 0, rate: playbackRate, paused: true, pendingSeek: false });
+    }
     setPlayerStatus(controls, options.resumePaused ? `Paused · ${formatTime(elapsedBeforeSession)}` : "Buffering audio…");
     setTransportState(controls, options.resumePaused ? "paused" : "buffering");
     animationFrame = requestAnimationFrame(updatePlaybackTime);
   } catch {
-    reportError("Audio playback could not start. Try again.");
+    if (!stopped) reportError("Audio playback could not start. Try again.");
   }
 }
 

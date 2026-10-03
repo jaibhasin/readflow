@@ -92,12 +92,17 @@ async function fixture({ resume = false } = {}) {
       },
       connect() {
         const listeners = [];
+        const disconnectListeners = [];
         const port = {
           sent: [], disconnected: false,
           onMessage: { addListener(listener) { listeners.push(listener); } },
-          onDisconnect: { addListener() {} },
+          onDisconnect: { addListener(listener) { disconnectListeners.push(listener); } },
           postMessage(message) { this.sent.push(structuredClone(message)); },
-          disconnect() { this.disconnected = true; },
+          disconnect() {
+            if (this.disconnected) return;
+            this.disconnected = true;
+            for (const listener of disconnectListeners) listener();
+          },
           emit(message) { for (const listener of listeners) listener(message); },
         };
         ports.push(port);
@@ -243,4 +248,54 @@ test("selected text stays separate from the article and its highlights clear on 
   await f.click("stop-button");
   assert.equal(f.window.CSS.highlights.get("readflow-selected-passage").size, 0);
   assert.equal(f.window.CSS.highlights.get("readflow-selected-sentence").size, 0);
+});
+
+test("word seeking after a saved resume uses full article offsets and can seek backward", async t => {
+  const f = await fixture({ resume: true });
+  t.after(f.close);
+  await f.click("article-button");
+  f.audio();
+  f.advance(0.25);
+  await f.click("pause-button");
+  const selectWord = (paragraph, start, end) => {
+    const element = f.window.document.getElementById(paragraph);
+    const range = f.window.document.createRange();
+    range.setStart(element.firstChild, start);
+    range.setEnd(element.firstChild, end);
+    f.window.getSelection().removeAllRanges();
+    f.window.getSelection().addRange(range);
+    element.dispatchEvent(new f.window.MouseEvent("dblclick", { bubbles: true }));
+  };
+  selectWord("second", 7, 14);
+  await tick();
+  assert.equal(f.ports.length, 1, "cached word in resumed source reuses audio");
+  assert.equal(f.contexts[0].state, "running");
+  selectWord("first", 0, 5);
+  await tick();
+  assert.equal(f.ports.length, 2);
+  assert.match(f.ports[1].sent.find(message => message.type === "start").text, /^First passage/);
+  f.audio();
+  f.advance(0.25);
+  assert.equal(f.followed.at(-1).paragraph, "first");
+  assert.equal(f.reads[0].text, f.source.text);
+});
+
+test("connection recovery after saved resume retains the absolute word offset and pause", async t => {
+  const f = await fixture({ resume: true });
+  t.after(f.close);
+  await f.click("article-button");
+  f.audio();
+  f.advance(0.25);
+  await f.click("pause-button");
+  const checkpoint = f.reads[0].offset;
+  f.ports[0].disconnect();
+  await tick();
+  assert.equal(f.ports.length, 2);
+  assert.equal(f.contexts[1].state, "suspended");
+  assert.equal(f.ports[1].sent.find(message => message.type === "start").text, f.source.text.slice(checkpoint));
+  assert.equal(f.reads[0].text, f.source.text);
+  f.audio();
+  await f.click("pause-button");
+  f.advance(0.25);
+  assert.equal(f.followed.at(-1).paragraph, "second");
 });

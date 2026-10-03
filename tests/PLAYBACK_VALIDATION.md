@@ -23,3 +23,20 @@ The browser reported no console errors.
 
 The fixture does not establish Chrome extension installation, live Fish service behavior, or subjective listening quality through the user's output device.
 Load this worktree's `dist/` folder in Chrome, refresh the article tab, and compare the same voice at 1×, 1.2×, and 1.4× for a final listening check.
+
+## Reconnection and word seeking
+
+Validated on 2026-10-04 on branch `fix/reconnect-and-double-click-seek`.
+
+Type checking, the production build, all 62 JavaScript unit tests, both Python bridge tests, and `git diff --check` passed.
+The new source-location tests cover repeated paragraphs, navigation exclusions, inline formatting, collapsed whitespace, stale nodes, selection boundaries, and original offsets after starting mid-article.
+The session test simulates ten minutes without content-script messages and verifies worker API activity before Chrome's 30-second idle cutoff and cleanup on disconnect.
+
+`node tests/playback-browser.mjs` passed in Chromium with the built content script, real Web Audio, synthetic PCM, and a controlled extension port.
+It verifies a 45-second frozen-tab pause, cached word seeking without a new speech request, an uncached word starting a request at that word, recovery preserving the current word and pause state, a bounded retry, selected-text listening, seek-listener cleanup, and cached playback after stream completion and disconnect.
+
+The environment's administrator policy blocks loading unpacked extensions, so these browser checks simulate the port rather than testing an installed extension's worker.
+Actual worker lifecycle behavior and live Fish Audio still need a check in the user's installed Chrome extension.
+
+After merging the newer saved-reading, voice-switching, and auto-scroll changes from `main`, the JavaScript suite runs with Node's default isolation so Chrome mocks remain local to each test file.
+Additional playback regressions cover cached seeking after a saved resume, seeking backward into earlier article text, and reconnecting at the absolute article offset while preserving pause state.

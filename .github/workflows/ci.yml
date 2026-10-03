@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extension:
+    name: Extension and browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Type check
+        run: npm run check
+      - name: Build extension
+        run: npm run build
+      - name: JavaScript unit tests
+        run: node --experimental-strip-types --test tests/*.test.mjs
+      - name: Browser playback tests
+        # Google Chrome is included in the GitHub-hosted Ubuntu runner image.
+        env:
+          CHROMIUM_PATH: /usr/bin/google-chrome
+        run: node tests/playback-browser.mjs
+
+  bridge:
+    name: Python bridge tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Python unit tests
+        run: uv run --no-sync python -m unittest discover -s tests -p 'test_*.py'
