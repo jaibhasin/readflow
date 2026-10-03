@@ -1,5 +1,11 @@
 import { extensionRuntime, RECONNECT_MESSAGE, sendExtensionMessage } from "./extension-runtime";
-import { DEFAULT_VOICE, type FishVoice, type VoicePage } from "./voices";
+import type { FishVoice, VoicePage } from "./voices";
+
+const DEFAULT_VOICE: FishVoice = {
+  id: "b347db033a6549378b48d00acb0d06cd",
+  name: "Selene",
+  languages: ["en"],
+};
 
 type VoiceReply<T> = T & { error?: string };
 

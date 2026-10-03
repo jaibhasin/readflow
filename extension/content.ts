@@ -8,13 +8,18 @@ import { splitTextSections } from "./text-sections";
 import { shortTapeTitle } from "./tape-label";
 import { extensionRuntime, RECONNECT_MESSAGE, sendExtensionMessage } from "./extension-runtime";
 import { createVoicePicker } from "./voice-picker";
-import { DEFAULT_VOICE, type FishVoice } from "./voices";
+import type { FishVoice } from "./voices";
 
 let stopCurrentPlayback: (() => void) | null = null;
 let setCurrentPlaybackSpeed: ((rate: number) => void) | null = null;
 let selectedPlaybackRate = 1;
 const SAMPLE_RATE = 44_100;
 const START_BUFFER_SECONDS = 3;
+const DEFAULT_VOICE: FishVoice = {
+  id: "b347db033a6549378b48d00acb0d06cd",
+  name: "Selene",
+  languages: ["en"],
+};
 const initialArticleSource = createArticleSource(document);
 let pageSentenceHighlighter: PageSentenceHighlighter | null = null;
 const voicePickers = new WeakMap<HTMLElement, ReturnType<typeof createVoicePicker>>();
