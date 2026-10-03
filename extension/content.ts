@@ -173,13 +173,20 @@ function createPageTextIndex(): PageTextIndex {
 }
 
 function findSourceStart(index: PageTextIndex, text: string, range?: Range): number {
-  if (range?.startContainer.nodeType === Node.TEXT_NODE) {
-    const node = range.startContainer as Text;
-    const span = index.spans.find((candidate) => candidate.node === node);
-    const localIndex = span?.offsets.findIndex((offset) => offset >= range.startOffset) ?? -1;
-    if (span && localIndex >= 0) {
-      return span.start + localIndex;
+  if (range) {
+    for (const span of index.spans) {
+      if (!range.intersectsNode(span.node)) {
+        continue;
+      }
+      const localIndex = span.offsets.findIndex((offset) =>
+        range.comparePoint(span.node, offset) === 0
+        && (span.node !== range.endContainer || offset < range.endOffset),
+      );
+      if (localIndex >= 0) {
+        return span.start + localIndex;
+      }
     }
+    return -1;
   }
 
   const normalizedSource = normalizeForSearch(text);
