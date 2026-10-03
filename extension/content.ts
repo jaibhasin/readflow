@@ -1188,10 +1188,10 @@ async function startPlayback(
         sentenceRanges.set(sentenceKey, range);
       }
       if (selectionRange) {
-        if (range.compareBoundaryPoints(Range.END_TO_START, selectionRange) <= 0) {
+        if (range.compareBoundaryPoints(Range.START_TO_END, selectionRange) <= 0) {
           continue;
         }
-        if (range.compareBoundaryPoints(Range.START_TO_END, selectionRange) >= 0) {
+        if (range.compareBoundaryPoints(Range.END_TO_START, selectionRange) >= 0) {
           break;
         }
         if (range.compareBoundaryPoints(Range.START_TO_START, selectionRange) < 0) {
