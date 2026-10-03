@@ -37,7 +37,7 @@ type PageTextIndex = {
 };
 
 type PageSentenceHighlighter = {
-  set(range: Range | null): void;
+  set(range: Range | null, selectionRange?: Range): void;
   clear(): void;
 };
 
@@ -228,16 +228,28 @@ function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
 
   const name = "readflow-current-sentence";
   const highlight = new HighlightConstructor();
+  const selectedPassage = new HighlightConstructor();
+  const selectedSentence = new HighlightConstructor();
+  selectedSentence.priority = 1;
   registry.set(name, highlight);
+  registry.set("readflow-selected-passage", selectedPassage);
+  registry.set("readflow-selected-sentence", selectedSentence);
   pageSentenceHighlighter = {
-    set(range) {
+    set(range, selectionRange) {
       highlight.clear();
+      selectedPassage.clear();
+      selectedSentence.clear();
+      if (selectionRange) {
+        selectedPassage.add(selectionRange);
+      }
       if (range) {
-        highlight.add(range);
+        (selectionRange ? selectedSentence : highlight).add(range);
       }
     },
     clear() {
       highlight.clear();
+      selectedPassage.clear();
+      selectedSentence.clear();
     },
   };
   return pageSentenceHighlighter;
@@ -855,6 +867,10 @@ async function startPlayback(
   let pageTextIndex: PageTextIndex | null = null;
   let sourceStart = -1;
   const highlighter = createPageSentenceHighlighter();
+  if (highlighter && selectionRange) {
+    highlighter.set(null, selectionRange);
+    window.getSelection()?.removeAllRanges();
+  }
   const alignmentsByChunk = new Map<number, ChunkAlignment>();
   let locatedWords: Array<{ sentenceKey: string; start: number; range: Range }> = [];
   let currentSentenceKey = "";
@@ -1108,7 +1124,7 @@ async function startPlayback(
     pendingSeekFrame = waiting ? targetFrame : null;
     nextStart = 0;
     playbackComplete = false;
-    highlighter?.clear();
+    highlighter?.set(null, selectionRange);
     currentSentenceKey = "";
     controls.pauseButton.textContent = context.state === "running" ? "Pause" : "Play";
 
@@ -1223,7 +1239,7 @@ async function startPlayback(
     }
 
     if (!word || !highlighter) {
-      highlighter?.clear();
+      highlighter?.set(null, selectionRange);
       currentSentenceKey = "";
       return;
     }
@@ -1231,7 +1247,7 @@ async function startPlayback(
       return;
     }
 
-    highlighter?.set(word.range);
+    highlighter?.set(word.range, selectionRange);
     currentSentenceKey = word.sentenceKey;
   };
 
