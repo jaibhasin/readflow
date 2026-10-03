@@ -1608,7 +1608,8 @@ async function startPlayback(
   });
 
   try {
-    if (!options.resumePaused) await context.resume();
+    if (options.resumePaused) await context.suspend();
+    else await context.resume();
     port.postMessage({
       type: "start",
       sessionId,

@@ -59,7 +59,7 @@ async function fixture({ resume = false } = {}) {
   window.CSS = { highlights: new Map() };
   window.Highlight = class extends Set {};
   window.AudioContext = class {
-    state = "suspended";
+    state = "running";
     currentTime = 0;
     destination = {};
     sources = [];
