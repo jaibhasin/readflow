@@ -46,19 +46,21 @@ Current page text or selection
   -> Fish Audio returns PCM audio and alignment frames over the same WebSocket
   -> bridge relays events to the service worker as a local SSE stream
   -> service worker forwards audio chunks to the content script
-  -> player buffers 100 ms of PCM, then schedules chunks consecutively with Web Audio
+  -> player buffers three seconds of audio at the selected speed, then schedules chunks consecutively with Web Audio
 ```
 
 The bridge accepts requests at `POST /v1/tts/stream/with-timestamp` and connects to Fish Audio's timestamped live WebSocket with the `model: s2.1-pro-free` header.
 It sends text fragments as MessagePack frames while receiving audio and alignment frames from Fish Audio.
 The bridge converts audio bytes to base64 and relays each event through a local SSE response.
 The service worker forwards events to the content script over a Chrome extension port.
-The player carries incomplete 16-bit PCM samples between events and buffers 100 ms before playback starts.
+The content script divides text at sentence boundaries into short requests and keeps a rolling buffer using up to three concurrent provider streams.
+One active request is used below 2×, two at 2×, and three at 3×, with a shared three-request limit across tabs.
+The player carries incomplete 16-bit PCM samples between events and waits for three seconds of audio at the current playback rate before starting.
 It schedules each audio buffer after the previous one so network event boundaries do not create gaps.
 Playback progress comes from the Web Audio output timestamp mapped to scheduled PCM frames, not from network arrival time.
 When playback stops or the tab navigates, closing the local stream closes the Fish Audio WebSocket.
-Alignment snapshots are cumulative for each `chunk_seq`; a newer snapshot replaces the previous one for that chunk.
-Adding `chunk_audio_offset_sec` to each word's local start and end times gives its position on the full audio timeline.
+Alignment snapshots are cumulative for each request-local `chunk_seq`; a newer snapshot replaces the previous one for that chunk.
+The worker holds out-of-order sections until earlier sections finish, then offsets each request's timestamps by the durations of preceding audio sections.
 
 For a full article, Readability identifies the reading content from a cloned document.
 Before extraction, temporary IDs on cloned text wrappers link each fragment to its original live text node.
@@ -70,10 +72,10 @@ Fish words align in order to the exact text sent to Fish, using whole words and 
 Playback resolves highlights through saved source offsets instead of searching the full page.
 Uncertain, changed, or detached text locations receive no highlight rather than pointing to another occurrence.
 
-The player should start as soon as a small audio buffer is ready.
+The player should start after its three-second playback buffer is ready.
 It should update the active word from the media clock, scroll only when the active paragraph leaves a comfortable reading area, and respect manual scrolling for a short period.
 The 15-second controls seek on the same media timeline, including back into audio that has already buffered.
-Long articles may require bounded text requests and a rolling buffer so that one request does not hold the entire article in memory.
+The section scheduler uses a target buffer of 12 seconds of playback and keeps requests bounded so parallel responses cannot grow without limit.
 
 ## Local key handling
 

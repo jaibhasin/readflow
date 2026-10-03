@@ -4,8 +4,12 @@ import test from "node:test";
 import { bufferFramesForSpeed, isAudioAudible, nextPlaybackRate, playbackDuration, playedFrames } from "../extension/playback-speed.ts";
 
 test("cycles through the available speeds", () => {
-  assert.equal(nextPlaybackRate(1), 1.25);
-  assert.equal(nextPlaybackRate(1.5), 0.75);
+  assert.equal(nextPlaybackRate(1), 1.1);
+  assert.equal(nextPlaybackRate(1.3), 1.4);
+  assert.equal(nextPlaybackRate(1.4), 1.5);
+  assert.equal(nextPlaybackRate(1.5), 2);
+  assert.equal(nextPlaybackRate(2), 3);
+  assert.equal(nextPlaybackRate(3), 0.75);
 });
 
 test("audio frames and elapsed time use the same speed", () => {

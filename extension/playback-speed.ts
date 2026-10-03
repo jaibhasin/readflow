@@ -1,4 +1,4 @@
-export const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5];
+export const PLAYBACK_RATES = [0.75, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 2, 3];
 
 export function nextPlaybackRate(currentRate: number): number {
   const index = PLAYBACK_RATES.indexOf(currentRate);

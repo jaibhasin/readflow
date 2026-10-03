@@ -3,7 +3,7 @@
 Readflow is a Chrome extension that reads articles and selected text aloud.
 
 The extension identifies likely article text and selected text, then shows a **Listen** action.
-It streams Fish Audio speech through a local Python bridge and starts playback after buffering 100 ms of audio.
+It streams Fish Audio speech through a local Python bridge and starts playback after a small audio buffer is ready.
 
 ## Requirements
 
@@ -69,11 +69,19 @@ Select text and choose **Listen** to read only that selection.
 Use **Back 15 seconds**, **Pause**, **Forward 15 seconds**, or **Stop** in the small player while audio is playing.
 The cassette label shows the article title and site, and its reels turn while audio is playing.
 Choose **−** to shrink the player to a compact view with status and play or pause, then **⌃** to expand it.
-The speed button cycles through 0.75×, 1×, 1.25×, and 1.5×.
-Speed changes take effect immediately and also change voice pitch.
+The speed button cycles through 0.75×, 1×, 1.1×, 1.2×, 1.3×, 1.4×, 1.5×, 2×, and 3×.
+Speed changes apply locally using continuous SoundTouch time stretching, preserving voice pitch.
+At 1× the original PCM passes through unchanged.
+The processor keeps its overlap across incoming chunks, drains its final audio tail, and maps playback time back to the original timestamps for sentence highlighting.
+Seeking or changing speed restarts processing from the current position using cached original audio.
+Processing uses small tasks so a long cached article does not block the player controls.
 If **Forward 15 seconds** reaches audio that has not arrived yet, playback waits at that target until enough audio is buffered.
-Each Listen action sends the full text once to the local bridge, which feeds Fish text fragments of up to 100 characters in one streaming session.
-That is usually around 15 to 20 English words per fragment, but the word count varies.
+Each Listen action splits text at sentence boundaries into short ordered sections and sends each section as a separate request through the local bridge.
+At 1× and speeds below 2×, Readflow requests one section at a time; at 2× it can request two at once, and at 3× it can request three at once.
+The extension limits all tabs together to three active Fish requests and starts more sections as the rolling buffer drains.
+Playback begins after three seconds of audio at the selected speed are ready, and waits if generation later falls behind.
+Audio sections are played in their original order, and their word timestamps are offset onto one continuous article timeline.
+Changing speed or seeking reprocesses cached audio locally and does not request the same text again.
 Readflow converts inline ordinal math such as `$n^\text{th}$` to “nth” before sending it to Fish.
 Other formulas are left as written until Readflow has a reliable spoken form for them.
 

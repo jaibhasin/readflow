@@ -1,15 +1,17 @@
 import { mapSentenceTimings, type SentenceTiming } from "./highlight-timeline";
 import { createArticleSource, createSelectionSource, type ReadingSource } from "./reading-source";
 import { bufferFramesForSpeed, isAudioAudible, nextPlaybackRate, playbackDuration, playedFrames } from "./playback-speed";
+import { StreamingTimeStretch } from "./time-stretch";
 import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenSource } from "./spoken-text";
+import { splitTextSections } from "./text-sections";
 import { shortTapeTitle } from "./tape-label";
 
 let stopCurrentPlayback: (() => void) | null = null;
 let setCurrentPlaybackSpeed: ((rate: number) => void) | null = null;
 let selectedPlaybackRate = 1;
 const SAMPLE_RATE = 44_100;
-const START_BUFFER_FRAMES = SAMPLE_RATE / 10;
+const START_BUFFER_SECONDS = 3;
 const initialArticleSource = createArticleSource(document);
 let pageSentenceHighlighter: PageSentenceHighlighter | null = null;
 
@@ -781,29 +783,38 @@ async function startPlayback(
     highlighter.set([], selectionRange);
     window.getSelection()?.removeAllRanges();
   }
-  const alignmentsByChunk = new Map<number, ChunkAlignment>();
+  const alignmentsByChunk = new Map<string, ChunkAlignment>();
   let locatedWords: SentenceTiming[] = [];
   let currentSentenceKey = "";
   let alignmentNeedsMapping = false;
   let didReportHighlightMapping = false;
   let didReportHighlightMismatch = false;
   const sources = new Set<AudioBufferSourceNode>();
-  const scheduledRanges: Array<{ start: number; end: number; firstFrame: number }> = [];
+  const scheduledRanges: Array<{ start: number; end: number; firstFrame: number; rate: number }> = [];
   const audioTimeline: Array<{ buffer: AudioBuffer; firstFrame: number }> = [];
   const pendingSamples: Float32Array<ArrayBuffer>[] = [];
   let pendingFrameCount = 0;
-  let pendingByte = new Uint8Array();
+  const pendingBytesBySection = new Map<number, Uint8Array>();
   let receivedFrames = 0;
   let seekStartFrame = 0;
   let pendingSeekFrame: number | null = null;
   let playbackRate = selectedPlaybackRate;
-  const bufferFrames = (): number => bufferFramesForSpeed(START_BUFFER_FRAMES, playbackRate);
+  let stretch = new StreamingTimeStretch(playbackRate, SAMPLE_RATE);
+  let processedOutputFrames = 0;
+  let stretchFinished = false;
+  let processingTimer = 0;
+  let processingEntry = 0;
+  let processingOffset = 0;
+  const bufferFrames = (): number => bufferFramesForSpeed(SAMPLE_RATE / 10, playbackRate);
+  const startupBufferFrames = (): number => Math.ceil(START_BUFFER_SECONDS * SAMPLE_RATE * playbackRate);
   let nextStart = 0;
   let streamFinished = false;
   let playbackComplete = false;
   let stopped = false;
   let animationFrame = 0;
   let playbackStarted = false;
+  let startupReady = false;
+  let lastBufferStatusAt = 0;
   const sessionId = crypto.randomUUID();
   const sessionStarted = performance.now();
 
@@ -829,6 +840,7 @@ async function startPlayback(
     stopped = true;
     setCurrentPlaybackSpeed = null;
     cancelAnimationFrame(animationFrame);
+    window.clearTimeout(processingTimer);
     highlighter?.clear();
     if (recordStop && !playbackComplete) {
       recordClientEvent("stopped", getAudibleFrame() / SAMPLE_RATE * 1000);
@@ -897,7 +909,7 @@ async function startPlayback(
   };
 
   const finishIfReady = (): void => {
-    if (streamFinished && sources.size === 0 && pendingFrameCount === 0 && !stopped) {
+    if (streamFinished && stretchFinished && sources.size === 0 && pendingFrameCount === 0 && !stopped) {
       playbackComplete = true;
       highlighter?.clear();
       currentSentenceKey = "";
@@ -909,42 +921,84 @@ async function startPlayback(
     }
   };
 
-  const scheduleBuffer = (
-    timelineEntry: { buffer: AudioBuffer; firstFrame: number },
-    offsetFrames: number,
-  ): void => {
-    const frameCount = timelineEntry.buffer.length - offsetFrames;
-    if (frameCount <= 0) {
+  const scheduleOutput = (samples: Float32Array<ArrayBuffer>): void => {
+    if (!samples.length) {
       return;
     }
 
+    const buffer = context.createBuffer(1, samples.length, SAMPLE_RATE);
+    buffer.copyToChannel(samples, 0);
     const audioSource = context.createBufferSource();
-    audioSource.buffer = timelineEntry.buffer;
-    audioSource.playbackRate.value = playbackRate;
+    audioSource.buffer = buffer;
+    audioSource.playbackRate.value = 1;
     audioSource.connect(context.destination);
 
     const schedulingLead = nextStart === 0 ? 0.05 : 0.01;
     const start = Math.max(context.currentTime + schedulingLead, nextStart);
-    const end = start + playbackDuration(frameCount, SAMPLE_RATE, playbackRate);
+    const end = start + playbackDuration(samples.length, SAMPLE_RATE, 1);
     scheduledRanges.push({
       start,
       end,
-      firstFrame: timelineEntry.firstFrame + offsetFrames,
+      firstFrame: seekStartFrame + processedOutputFrames * playbackRate,
+      rate: playbackRate,
     });
+    processedOutputFrames += samples.length;
     nextStart = end;
     sources.add(audioSource);
     audioSource.onended = () => {
       sources.delete(audioSource);
       finishIfReady();
     };
-    audioSource.start(start, offsetFrames / SAMPLE_RATE);
+    audioSource.start(start);
+  };
+
+  const finishStretch = (): void => {
+    if (!stretchFinished && pendingSeekFrame === null) {
+      scheduleOutput(stretch.finish());
+      stretchFinished = true;
+    }
+  };
+
+  const processAvailableAudio = (): void => {
+    processingTimer = 0;
+    if (stopped || pendingSeekFrame !== null) return;
+    const deadline = performance.now() + 8;
+    while (processingEntry < audioTimeline.length) {
+      const samples = audioTimeline[processingEntry].buffer.getChannelData(0);
+      const end = Math.min(samples.length, processingOffset + 8192);
+      scheduleOutput(stretch.push(samples.subarray(processingOffset, end)));
+      processingOffset = end;
+      if (processingOffset === samples.length) {
+        processingEntry += 1;
+        processingOffset = 0;
+      }
+      if (performance.now() >= deadline) {
+        processingTimer = window.setTimeout(processAvailableAudio, 0);
+        return;
+      }
+    }
+    if (streamFinished && pendingFrameCount === 0) {
+      finishStretch();
+      finishIfReady();
+    }
   };
 
   const scheduleFromFrame = (targetFrame: number): void => {
-    for (const timelineEntry of audioTimeline) {
-      const offsetFrames = Math.max(0, targetFrame - timelineEntry.firstFrame);
-      scheduleBuffer(timelineEntry, offsetFrames);
+    processingEntry = 0;
+    processingOffset = 0;
+    while (processingEntry < audioTimeline.length) {
+      const entry = audioTimeline[processingEntry];
+      if (entry.firstFrame + entry.buffer.length > targetFrame) {
+        processingOffset = Math.max(0, Math.floor(targetFrame - entry.firstFrame));
+        break;
+      }
+      processingEntry += 1;
     }
+    processAvailableAudio();
+  };
+
+  const startWhenBuffered = (): void => {
+    if (!startupReady && (receivedFrames >= startupBufferFrames() || streamFinished)) startupReady = true;
   };
 
   const scheduleSamples = (samples: Float32Array<ArrayBuffer>): void => {
@@ -954,7 +1008,7 @@ async function startPlayback(
     audioTimeline.push(timelineEntry);
     receivedFrames += samples.length;
     if (pendingSeekFrame !== null) {
-      const seek = resolveSeekTarget(pendingSeekFrame, receivedFrames, streamFinished, bufferFrames());
+      const seek = resolveSeekTarget(pendingSeekFrame, receivedFrames, streamFinished, startupBufferFrames());
       if (seek.waiting) {
         return;
       }
@@ -963,7 +1017,8 @@ async function startPlayback(
       scheduleFromFrame(seek.targetFrame);
       return;
     }
-    scheduleBuffer(timelineEntry, 0);
+    startWhenBuffered();
+    if (startupReady && !processingTimer) processAvailableAudio();
   };
 
   const flushSamples = (force: boolean): void => {
@@ -978,14 +1033,16 @@ async function startPlayback(
     pendingFrameCount = 0;
   };
 
-  const queueAudio = (audioBase64: string): void => {
+  const queueAudio = (audioBase64: string, sectionIndex: number): void => {
     const decoded = atob(audioBase64);
     const incoming = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+    const pendingByte = pendingBytesBySection.get(sectionIndex) || new Uint8Array();
     const combined = new Uint8Array(pendingByte.length + incoming.length);
     combined.set(pendingByte);
     combined.set(incoming, pendingByte.length);
     const completeLength = combined.length - (combined.length % 2);
-    pendingByte = combined.slice(completeLength);
+    if (completeLength === combined.length) pendingBytesBySection.delete(sectionIndex);
+    else pendingBytesBySection.set(sectionIndex, combined.slice(completeLength));
 
     if (completeLength === 0) {
       return;
@@ -1009,17 +1066,17 @@ async function startPlayback(
         break;
       }
       if (outputContextTime < range.end) {
-        frame = range.firstFrame + playedFrames(outputContextTime - range.start, SAMPLE_RATE, playbackRate);
+        frame = range.firstFrame + playedFrames(outputContextTime - range.start, SAMPLE_RATE, range.rate);
         break;
       }
-      frame = range.firstFrame + playedFrames(range.end - range.start, SAMPLE_RATE, playbackRate);
+      frame = range.firstFrame + playedFrames(range.end - range.start, SAMPLE_RATE, range.rate);
     }
     return Math.min(receivedFrames, Math.max(0, frame));
   };
 
   const seekTo = (requestedFrame: number, recordSeek = true): void => {
     const { targetFrame, waiting } = resolveSeekTarget(
-      requestedFrame, receivedFrames, streamFinished, bufferFrames(),
+      requestedFrame, receivedFrames, streamFinished, startupBufferFrames(),
     );
     if (recordSeek) {
       recordClientEvent("seek", targetFrame / SAMPLE_RATE * 1000);
@@ -1029,8 +1086,14 @@ async function startPlayback(
       audioSource.stop();
     }
     sources.clear();
+    window.clearTimeout(processingTimer);
+    processingTimer = 0;
     scheduledRanges.length = 0;
     seekStartFrame = targetFrame;
+    stretch = new StreamingTimeStretch(playbackRate, SAMPLE_RATE);
+    processedOutputFrames = 0;
+    stretchFinished = false;
+    startupReady = true;
     pendingSeekFrame = waiting ? targetFrame : null;
     nextStart = 0;
     playbackComplete = false;
@@ -1062,6 +1125,7 @@ async function startPlayback(
   setCurrentPlaybackSpeed = (rate) => {
     const frame = pendingSeekFrame ?? getAudibleFrame();
     playbackRate = rate;
+    port.postMessage({ type: "set_speed", rate });
     recordClientEvent("speed_changed", frame / SAMPLE_RATE * 1000, { rate });
     if (!playbackComplete) {
       seekTo(frame, false);
@@ -1116,10 +1180,21 @@ async function startPlayback(
   };
 
   const updatePlaybackTime = (): void => {
-    if (stopped || streamFinished && sources.size === 0) {
+    if (stopped || playbackComplete) {
       return;
     }
 
+    const now = performance.now();
+    if (now - lastBufferStatusAt >= 250) {
+      lastBufferStatusAt = now;
+      port.postMessage({
+        type: "buffer_status",
+        audibleFrame: pendingSeekFrame ?? getAudibleFrame(),
+        rate: playbackRate,
+        paused: context.state === "suspended",
+        pendingSeek: pendingSeekFrame !== null,
+      });
+    }
     if (scheduledRanges.length === 0) {
       animationFrame = requestAnimationFrame(updatePlaybackTime);
       return;
@@ -1152,6 +1227,7 @@ async function startPlayback(
     audio_base64?: string;
     message?: string;
     chunk_seq?: number;
+    section_index?: number;
     chunk_audio_offset_sec?: number;
     alignment?: { segments?: WordTiming[] } | null;
   }) => {
@@ -1161,9 +1237,10 @@ async function startPlayback(
 
     if (message.event === "audio" && message.audio_base64) {
       try {
-        queueAudio(message.audio_base64);
+        const sectionIndex = Number(message.section_index) || 0;
+        queueAudio(message.audio_base64, sectionIndex);
         if (typeof message.chunk_seq === "number" && message.alignment?.segments?.length) {
-          alignmentsByChunk.set(message.chunk_seq, {
+          alignmentsByChunk.set(`${sectionIndex}:${message.chunk_seq}`, {
             offset: typeof message.chunk_audio_offset_sec === "number" ? message.chunk_audio_offset_sec : 0,
             segments: message.alignment.segments,
           });
@@ -1172,8 +1249,13 @@ async function startPlayback(
       } catch {
         reportError("Readflow received invalid audio data.");
       }
+    } else if (message.event === "section_finish") {
+      const sectionIndex = Number(message.section_index) || 0;
+      if (pendingBytesBySection.get(sectionIndex)?.length) {
+        reportError("Fish Audio ended with an incomplete PCM sample.");
+      }
     } else if (message.event === "finish") {
-      if (pendingByte.length) {
+      if (pendingBytesBySection.size) {
         reportError("Fish Audio ended with an incomplete PCM sample.");
         return;
       }
@@ -1186,7 +1268,8 @@ async function startPlayback(
       if (pendingSeekFrame !== null) {
         seekTo(pendingSeekFrame);
       }
-      finishIfReady();
+      startWhenBuffered();
+      if (!processingTimer) processAvailableAudio();
     } else if (message.event === "error") {
       reportError(message.message || "Audio could not be generated.");
     }
@@ -1199,11 +1282,13 @@ async function startPlayback(
       sessionId,
       source: source === "Article" ? "article" : "selection",
       text: spokenText,
+      sections: splitTextSections(spokenText),
+      rate: playbackRate,
       textCharCount: spokenText.length,
       wordCount: spokenText.trim().split(/\s+/).length,
       startedAt: new Date().toISOString(),
     });
-    setPlayerStatus(controls, "Waiting for 100 ms of audio…");
+    setPlayerStatus(controls, "Buffering audio…");
     setTransportState(controls, "buffering");
     animationFrame = requestAnimationFrame(updatePlaybackTime);
   } catch {
