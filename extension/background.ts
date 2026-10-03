@@ -7,6 +7,7 @@ import {
 } from "./diagnostics-store";
 import type { TextSection } from "./text-sections";
 import { DEFAULT_VOICE, isFishVoice, type VoicePage } from "./voices";
+import { keepSessionConnected } from "./session-connection";
 
 type StreamEvent = {
   event: "connected" | "audio" | "finish" | "error";
@@ -61,6 +62,7 @@ chrome.runtime.onConnect.addListener((port) => {
   }
 
   const controller = new AbortController();
+  const stopHeartbeat = keepSessionConnected(chrome.runtime);
   let sessionController: AbortController | null = null;
   let disconnected = false;
   let session: TraceSession | null = null;
@@ -84,6 +86,7 @@ chrome.runtime.onConnect.addListener((port) => {
   };
 
   port.onDisconnect.addListener(() => {
+    stopHeartbeat();
     disconnected = true;
     controller.abort();
     sessionController?.abort();
@@ -150,6 +153,7 @@ chrome.runtime.onConnect.addListener((port) => {
       if (session && message.kind === "playback_started") {
         session.playback_started_ms = message.clientElapsedMs;
       } else if (session && message.kind === "playback_finished") {
+        stopHeartbeat();
         finishSession(session, "finished");
       } else if (session && message.kind === "stopped") {
         finishSession(session, "stopped");

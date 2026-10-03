@@ -67,6 +67,12 @@ Keep the local bridge running while listening.
 On an article page, choose **Listen to article** to read the article.
 Select text and choose **Listen** to read only that selection.
 Use **Back 15 seconds**, **Pause**, **Forward 15 seconds**, or **Stop** in the small player while audio is playing.
+While listening to an article, double-click a word in the article to continue reading from that word, including while paused.
+Words with cached audio seek immediately; words that have not been generated start a new stream from that point, skipping the intervening paragraphs.
+You can still select a passage and choose **Listen** to read just that selection.
+Paused listening sessions keep their background connection alive when you switch tabs.
+If the background worker unexpectedly restarts, Readflow tries once to reconnect at the current word and preserves the pause state.
+Reloading or updating the extension itself still requires refreshing an already-open article tab.
 The cassette label shows the article title and site, and its reels turn while audio is playing.
 Choose **−** to shrink the player to a compact view with status and play or pause, then **⌃** to expand it.
 The speed button cycles through 0.75×, 1×, 1.1×, 1.2×, 1.3×, 1.4×, 1.5×, 2×, and 3×.
@@ -81,7 +87,7 @@ At 1× and speeds below 2×, Readflow requests one section at a time; at 2× it 
 The extension limits all tabs together to three active Fish requests and starts more sections as the rolling buffer drains.
 Playback begins after three seconds of audio at the selected speed are ready, and waits if generation later falls behind.
 Audio sections are played in their original order, and their word timestamps are offset onto one continuous article timeline.
-Changing speed or seeking reprocesses cached audio locally and does not request the same text again.
+Changing speed or seeking within cached audio reprocesses it locally and does not request the same text again.
 Readflow converts inline ordinal math such as `$n^\text{th}$` to “nth” before sending it to Fish.
 Other formulas are left as written until Readflow has a reliable spoken form for them.
 
@@ -108,6 +114,10 @@ Fish Audio events should arrive as the service generates audio and timestamp dat
 
 ## Run checks
 
+GitHub Actions runs type checking, the production build, all JavaScript unit tests, the browser playback check, and Python bridge tests on every push and pull request.
+The workflow can also be started manually from GitHub's **Actions** tab.
+CI uses synthetic audio and mocked Fish connections, so it needs no Fish API key.
+
 The TypeScript and DOM unit tests below require Node.js 22.13 or newer.
 
 ```sh
@@ -115,3 +125,8 @@ npm run check
 npm run build
 node --experimental-strip-types --test tests/*.test.mjs
 ```
+
+For a browser playback check, build first, then run `node tests/playback-browser.mjs` with Chromium installed (or set `CHROMIUM_PATH` to its executable).
+This uses synthetic audio and a controlled extension port with real Web Audio to check a 45-second frozen-tab pause, word seeking, disconnect recovery, and selected-text listening.
+It requires free local ports 4179, 4180, and 9224; stop the local bridge first.
+It does not test Chrome's extension service-worker lifecycle or live Fish Audio.

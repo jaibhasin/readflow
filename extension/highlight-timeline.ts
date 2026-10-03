@@ -2,7 +2,7 @@ import { sourceRanges, type ReadingSource } from "./reading-source.ts";
 import type { prepareSpokenSource } from "./spoken-text.ts";
 import { alignSpokenWords } from "./word-alignment.ts";
 
-export type SentenceTiming = { sentenceKey: string; start: number; ranges: Range[] };
+export type SentenceTiming = { sentenceKey: string; start: number; sourceOffset?: number; ranges: Range[] };
 
 export function mapSentenceTimings(
   source: ReadingSource,
@@ -11,7 +11,7 @@ export function mapSentenceTimings(
 ): SentenceTiming[] {
   const offsets = alignSpokenWords(spoken.text, segments.map((segment) => segment.text));
   const cachedRanges = new Map<string, Range[]>();
-  return segments.flatMap((segment, index) => {
+  return segments.flatMap<SentenceTiming>((segment, index) => {
     if (!Number.isFinite(segment.start) || !Number.isFinite(segment.end)) {
       return [];
     }
@@ -27,6 +27,6 @@ export function mapSentenceTimings(
       ranges = sourceRanges(source, sentence.start, sentence.end);
       cachedRanges.set(sentenceKey, ranges);
     }
-    return [{ sentenceKey: ranges.length ? sentenceKey : "", start: segment.start, ranges }];
+    return [{ sentenceKey: ranges.length ? sentenceKey : "", start: segment.start, sourceOffset, ranges }];
   });
 }

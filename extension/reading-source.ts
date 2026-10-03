@@ -143,3 +143,24 @@ export function sourceRanges(source: ReadingSource, start: number, end: number):
   }
   return ranges;
 }
+
+// Resolve the actual DOM occurrence, including whitespace collapsed during extraction.
+export function sourceOffsetAt(source: ReadingSource, node: Node, offset: number): number | null {
+  const span = source.spans.find((candidate) => candidate.node === node);
+  if (!span || !span.node.isConnected || span.node.data !== span.originalText) return null;
+  const index = span.offsets.indexOf(offset);
+  return index < 0 || span.start + index >= source.text.length ? null : span.start + index;
+}
+
+export function selectedWordOffset(source: ReadingSource, range: Range): number | null {
+  if (range.collapsed) return null;
+  const offset = sourceOffsetAt(source, range.startContainer, range.startOffset);
+  if (offset === null) return null;
+  const words = new Intl.Segmenter(undefined, { granularity: "word" });
+  for (const word of words.segment(source.text)) {
+    if (word.isWordLike && word.index <= offset && offset < word.index + word.segment.length) {
+      return word.index;
+    }
+  }
+  return null;
+}

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
-import { createArticleSource, createSelectionSource, sourceRanges } from "../extension/reading-source.ts";
+import { createArticleSource, createSelectionSource, selectedWordOffset, sourceOffsetAt, sourceRanges } from "../extension/reading-source.ts";
 
 const paragraph = "This article describes a reader following the same words in separate paragraphs, with enough detail to identify the main content reliably. ".repeat(5);
 
@@ -105,4 +105,44 @@ test("source extraction preserves main's sentence boundaries before case-insensi
   assert.deepEqual(source.sentences.map(({ start, end }) => source.text.slice(start, end)), [
     "First sentence.", "Second sentence?", "Third sentence.",
   ]);
+});
+
+test("double-click resolves repeated words by DOM occurrence, excluding navigation", () => {
+  const document = articleDocument();
+  const source = createArticleSource(document);
+  const range = document.createRange();
+  range.setStart(document.getElementById("second").firstChild, 5);
+  range.setEnd(document.getElementById("second").firstChild, 10);
+  assert.equal(selectedWordOffset(source, range), source.text.indexOf("going", source.text.indexOf("going") + 1));
+  range.selectNodeContents(document.querySelector("nav p").firstChild);
+  assert.equal(selectedWordOffset(source, range), null);
+});
+
+test("word seeking handles inline words and collapsed whitespace without accepting stale nodes", () => {
+  const document = new JSDOM("<p>  Hello \n <strong>world</strong>. After.</p>").window.document;
+  const passage = document.createRange();
+  passage.selectNodeContents(document.querySelector("p"));
+  const source = createSelectionSource(passage);
+  const word = document.createRange();
+  const node = document.querySelector("strong").firstChild;
+  word.setStart(node, 1);
+  word.setEnd(node, 5);
+  assert.equal(selectedWordOffset(source, word), 6);
+  assert.equal(sourceOffsetAt(source, document.querySelector("p").firstChild, 2), 0);
+  word.collapse(true);
+  assert.equal(selectedWordOffset(source, word), null);
+  node.data = "other";
+  assert.equal(sourceOffsetAt(source, node, 0), null);
+});
+
+test("seeking cannot escape a selected source through the same text node", () => {
+  const document = new JSDOM("<p>Before selected words after.</p>").window.document;
+  const node = document.querySelector("p").firstChild;
+  const passage = document.createRange();
+  passage.setStart(node, 7);
+  passage.setEnd(node, 21);
+  const source = createSelectionSource(passage);
+  assert.equal(sourceOffsetAt(source, node, 0), null);
+  assert.equal(sourceOffsetAt(source, node, 7), 0);
+  assert.equal(sourceOffsetAt(source, node, 22), null);
 });
