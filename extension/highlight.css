@@ -1,14 +1,12 @@
 ::highlight(readflow-current-sentence) {
-  background-color: var(--readflow-current-sentence-highlight, rgba(255, 204, 102, 0.24)) !important;
+  background-color: var(--readflow-current-sentence-highlight, rgba(59, 130, 246, 0.28)) !important;
 }
 
 ::highlight(readflow-selected-passage) {
-  background-color: #315f9b !important;
-  color: #ffffff !important;
+  background-color: var(--readflow-selected-passage-highlight, rgba(59, 130, 246, 0.12)) !important;
 }
 
 ::highlight(readflow-selected-sentence) {
-  background-color: transparent !important;
-  color: #ffffff !important;
-  text-decoration: underline solid #ffe08a 2px !important;
+  background-color: var(--readflow-current-sentence-highlight, rgba(59, 130, 246, 0.28)) !important;
+  text-decoration: underline solid currentColor 2px !important;
 }

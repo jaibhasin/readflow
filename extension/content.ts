@@ -2,6 +2,7 @@ import { resumeOffset, type ReadingItem } from "./reading-list-store";
 import { mapReadingOffsets } from "./reading-progress";
 import { sentenceSpans } from "./text-map";
 import { mapSentenceTimings, type SentenceTiming } from "./highlight-timeline";
+import { createPageHighlighter, type PageSentenceHighlighter } from "./page-highlighter";
 import { createArticleSource, createSelectionSource, sliceReadingSource, type ReadingSource } from "./reading-source";
 import { bufferFramesForSpeed, isAudioAudible, playbackDuration, playedFrames } from "./playback-speed";
 import { StreamingTimeStretch } from "./time-stretch";
@@ -37,67 +38,6 @@ type ChunkAlignment = {
   offset: number;
   segments: WordTiming[];
 };
-
-type PageSentenceHighlighter = {
-  set(ranges: Range[], selectionRange?: Range): void;
-  clear(): void;
-};
-
-const SENTENCE_HIGHLIGHT_COLOR = "--readflow-current-sentence-highlight";
-
-function adaptiveSentenceHighlight(range: Range): string {
-  const layers: Array<{ red: number; green: number; blue: number; alpha: number }> = [];
-  let element = range.startContainer instanceof Element
-    ? range.startContainer
-    : range.startContainer.parentElement;
-
-  while (element) {
-    const match = getComputedStyle(element).backgroundColor.match(
-      /^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/,
-    );
-    if (match) {
-      const alphaValue = match[4] ?? "1";
-      const alpha = alphaValue.endsWith("%")
-        ? Number.parseFloat(alphaValue) / 100
-        : Number.parseFloat(alphaValue);
-      if (alpha > 0) {
-        layers.push({
-          red: Number(match[1]),
-          green: Number(match[2]),
-          blue: Number(match[3]),
-          alpha,
-        });
-      }
-    }
-    element = element.parentElement;
-  }
-
-  const pageScheme = getComputedStyle(document.documentElement).colorScheme;
-  const prefersDark = pageScheme.includes("dark") || matchMedia("(prefers-color-scheme: dark)").matches;
-  let background = prefersDark
-    ? { red: 24, green: 24, blue: 24 }
-    : { red: 255, green: 255, blue: 255 };
-  for (const layer of layers.reverse()) {
-    background = {
-      red: layer.red * layer.alpha + background.red * (1 - layer.alpha),
-      green: layer.green * layer.alpha + background.green * (1 - layer.alpha),
-      blue: layer.blue * layer.alpha + background.blue * (1 - layer.alpha),
-    };
-  }
-
-  const luminance = (channel: number): number => {
-    const normalized = channel / 255;
-    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
-  };
-  const relativeLuminance = 0.2126 * luminance(background.red)
-    + 0.7152 * luminance(background.green)
-    + 0.0722 * luminance(background.blue);
-
-  // Butter gold glows softly on dark pages; toasted honey stays distinct on light pages.
-  return relativeLuminance < 0.35
-    ? "rgba(255, 211, 128, 0.34)"
-    : "rgba(180, 116, 23, 0.24)";
-}
 
 type TransportState = "idle" | "connecting" | "buffering" | "playing" | "paused" | "finished" | "stopped" | "error";
 
@@ -259,57 +199,7 @@ function getSelectedText(): string | null {
 }
 
 function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
-  if (pageSentenceHighlighter) {
-    return pageSentenceHighlighter;
-  }
-
-  type HighlightValue = Set<Range> & { priority: number };
-  type HighlightRegistry = { set(name: string, value: HighlightValue): void };
-  const registry = (CSS as unknown as { highlights?: HighlightRegistry }).highlights;
-  const HighlightConstructor = (window as unknown as {
-    Highlight?: new (...ranges: Range[]) => HighlightValue;
-  }).Highlight;
-  if (!registry || !HighlightConstructor) {
-    return null;
-  }
-
-  const name = "readflow-current-sentence";
-  const highlight = new HighlightConstructor();
-  const selectedPassage = new HighlightConstructor();
-  const selectedSentence = new HighlightConstructor();
-  selectedSentence.priority = 1;
-  registry.set(name, highlight);
-  registry.set("readflow-selected-passage", selectedPassage);
-  registry.set("readflow-selected-sentence", selectedSentence);
-  pageSentenceHighlighter = {
-    set(ranges, selectionRange) {
-      if (ranges.length && !selectionRange) {
-        document.documentElement.style.setProperty(
-          SENTENCE_HIGHLIGHT_COLOR,
-          adaptiveSentenceHighlight(ranges[0]),
-        );
-      } else if (!selectionRange) {
-        document.documentElement.style.removeProperty(SENTENCE_HIGHLIGHT_COLOR);
-      }
-      highlight.clear();
-      selectedSentence.clear();
-      if (!selectionRange) {
-        selectedPassage.clear();
-      } else if (!selectedPassage.has(selectionRange)) {
-        selectedPassage.clear();
-        selectedPassage.add(selectionRange);
-      }
-      for (const range of ranges) {
-        (selectionRange ? selectedSentence : highlight).add(range);
-      }
-    },
-    clear() {
-      highlight.clear();
-      selectedPassage.clear();
-      selectedSentence.clear();
-      document.documentElement.style.removeProperty(SENTENCE_HIGHLIGHT_COLOR);
-    },
-  };
+  pageSentenceHighlighter ??= createPageHighlighter(document);
   return pageSentenceHighlighter;
 }
 
