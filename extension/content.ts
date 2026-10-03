@@ -1481,7 +1481,7 @@ async function startPlayback(
 
     if (playing && word?.ranges.length && word.sourceOffset !== null) {
       const offset = word.sourceOffset;
-      autoScroller.follow(() => sourceRanges(readingSource, offset, offset + 1));
+      autoScroller.follow(() => sourceRanges(playbackSource, offset, offset + 1));
     }
     if (!word || !highlighter) {
       highlighter?.set([], selectionRange);
