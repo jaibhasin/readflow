@@ -6,6 +6,7 @@ import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenSource } from "./spoken-text";
 import { splitTextSections } from "./text-sections";
 import { shortTapeTitle } from "./tape-label";
+import { extensionRuntime, RECONNECT_MESSAGE, sendExtensionMessage } from "./extension-runtime";
 
 let stopCurrentPlayback: (() => void) | null = null;
 let setCurrentPlaybackSpeed: ((rate: number) => void) | null = null;
@@ -104,7 +105,9 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
   });
 
   controls.debugButton.addEventListener("click", () => {
-    void chrome.runtime.sendMessage({ type: "open_diagnostics" });
+    void sendExtensionMessage({ type: "open_diagnostics" }).catch(() => {
+      setPlayerStatus(controls, RECONNECT_MESSAGE);
+    });
   });
 
   const closeSpeedPanel = (): void => {
@@ -982,16 +985,25 @@ async function startPlayback(
   setPlayerStatus(controls, `Connecting for ${source.toLowerCase()} audio…`);
   controls.status.hidden = false;
 
+  let port: chrome.runtime.Port;
+  try {
+    port = extensionRuntime().connect({ name: "readflow-tts" });
+  } catch {
+    setTransportState(controls, "error");
+    setPlayerStatus(controls, RECONNECT_MESSAGE);
+    return;
+  }
+
   let context: AudioContext;
   try {
     context = new AudioContext({ sampleRate: SAMPLE_RATE });
   } catch {
+    port.disconnect();
     setTransportState(controls, "error");
     setPlayerStatus(controls, "This browser could not create a 44.1 kHz audio stream.");
     controls.status.hidden = false;
     return;
   }
-  const port = chrome.runtime.connect({ name: "readflow-tts" });
   const highlighter = createPageSentenceHighlighter();
   if (highlighter && selectionRange) {
     highlighter.set([], selectionRange);
@@ -1033,13 +1045,17 @@ async function startPlayback(
   const sessionStarted = performance.now();
 
   const recordClientEvent = (kind: string, playbackMs?: number, value?: unknown): void => {
-    port.postMessage({
-      type: "client_event",
+    try {
+      port.postMessage({
+        type: "client_event",
       kind,
       clientElapsedMs: performance.now() - sessionStarted,
       playbackMs,
       value,
-    });
+      });
+    } catch {
+      // A lost connection must not prevent audio cleanup.
+    }
   };
   recordClientEvent("listen_started");
   if (!highlighter) {
@@ -1059,11 +1075,11 @@ async function startPlayback(
     if (recordStop && !playbackComplete) {
       recordClientEvent("stopped", getAudibleFrame() / SAMPLE_RATE * 1000);
     }
-    port.disconnect();
+    try { port.disconnect(); } catch { /* Already disconnected. */ }
     for (const audioSource of sources) {
       audioSource.stop();
     }
-    void context.close();
+    void context.close().catch(() => undefined);
   };
 
   stopCurrentPlayback = cleanup;
@@ -1121,6 +1137,11 @@ async function startPlayback(
       stopCurrentPlayback = null;
     }
   };
+
+  port.onDisconnect.addListener(() => {
+    const error = chrome.runtime?.lastError;
+    if (!stopped && (!streamFinished || error)) reportError(RECONNECT_MESSAGE);
+  });
 
   const finishIfReady = (): void => {
     if (streamFinished && stretchFinished && sources.size === 0 && pendingFrameCount === 0 && !stopped) {
@@ -1339,7 +1360,10 @@ async function startPlayback(
   setCurrentPlaybackSpeed = (rate) => {
     const frame = pendingSeekFrame ?? getAudibleFrame();
     playbackRate = rate;
-    port.postMessage({ type: "set_speed", rate });
+    try { port.postMessage({ type: "set_speed", rate }); } catch {
+      reportError(RECONNECT_MESSAGE);
+      return;
+    }
     recordClientEvent("speed_changed", frame / SAMPLE_RATE * 1000, { rate });
     if (!playbackComplete) {
       seekTo(frame, false);
@@ -1401,13 +1425,18 @@ async function startPlayback(
     const now = performance.now();
     if (now - lastBufferStatusAt >= 250) {
       lastBufferStatusAt = now;
-      port.postMessage({
-        type: "buffer_status",
+      try {
+        port.postMessage({
+          type: "buffer_status",
         audibleFrame: pendingSeekFrame ?? getAudibleFrame(),
         rate: playbackRate,
         paused: context.state === "suspended",
         pendingSeek: pendingSeekFrame !== null,
-      });
+        });
+      } catch {
+        reportError(RECONNECT_MESSAGE);
+        return;
+      }
     }
     if (scheduledRanges.length === 0) {
       animationFrame = requestAnimationFrame(updatePlaybackTime);
