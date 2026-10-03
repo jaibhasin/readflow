@@ -1,6 +1,6 @@
 import { mapSentenceTimings, type SentenceTiming } from "./highlight-timeline";
 import { createArticleSource, createSelectionSource, type ReadingSource } from "./reading-source";
-import { bufferFramesForSpeed, isAudioAudible, nextPlaybackRate, playbackDuration, playedFrames } from "./playback-speed";
+import { bufferFramesForSpeed, isAudioAudible, playbackDuration, playedFrames } from "./playback-speed";
 import { StreamingTimeStretch } from "./time-stretch";
 import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenSource } from "./spoken-text";
@@ -108,10 +108,17 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
   });
 
   controls.speedButton.addEventListener("click", () => {
-    selectedPlaybackRate = nextPlaybackRate(selectedPlaybackRate);
-    controls.speedButton.textContent = `${selectedPlaybackRate}×`;
+    controls.speedPanel.hidden = !controls.speedPanel.hidden;
+    controls.speedButton.setAttribute("aria-expanded", String(!controls.speedPanel.hidden));
+  });
+
+  controls.speedSlider.addEventListener("input", () => {
+    selectedPlaybackRate = Number(controls.speedSlider.value);
+    const label = `${selectedPlaybackRate.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}×`;
+    controls.speedButton.textContent = label;
     controls.speedButton.title = `Playback speed: ${selectedPlaybackRate} times`;
-    controls.speedButton.setAttribute("aria-label", `Playback speed ${selectedPlaybackRate} times. Change speed`);
+    controls.speedButton.setAttribute("aria-label", `Playback speed ${selectedPlaybackRate} times`);
+    controls.speedValue.textContent = label;
     setCurrentPlaybackSpeed?.(selectedPlaybackRate);
   });
 
@@ -225,6 +232,9 @@ function createControls(): {
   articleButton: HTMLButtonElement;
   debugButton: HTMLButtonElement;
   speedButton: HTMLButtonElement;
+  speedPanel: HTMLDivElement;
+  speedSlider: HTMLInputElement;
+  speedValue: HTMLSpanElement;
   minimizeButton: HTMLButtonElement;
   expandButton: HTMLButtonElement;
   miniActionButton: HTMLButtonElement;
@@ -391,6 +401,23 @@ function createControls(): {
       #speed-button:hover {
         background: #354144;
       }
+
+      #speed-panel {
+        align-items: center;
+        background: linear-gradient(180deg, #303b3e, #20292c);
+        border: 1px solid #667471;
+        border-radius: 8px;
+        box-shadow: 0 5px 16px rgb(0 0 0 / 30%), inset 0 1px rgb(255 255 255 / 8%);
+        display: flex;
+        gap: 10px;
+        margin: 7px 0 0 auto;
+        padding: 8px 10px;
+        width: 205px;
+      }
+
+      #speed-panel[hidden] { display: none; }
+      #speed-slider { accent-color: #d6e986; cursor: pointer; flex: 1; min-width: 0; }
+      #speed-value { color: #dce9ac; font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; min-width: 32px; text-align: right; }
 
       #cassette-window {
         align-items: center;
@@ -707,6 +734,12 @@ function createControls(): {
             <button id="minimize-button" type="button" title="Minimize player" aria-label="Minimize Readflow player">−</button>
           </div>
         </div>
+        <div id="speed-panel" role="group" aria-label="Playback speed" hidden>
+          <span>0.75×</span>
+          <input id="speed-slider" type="range" min="0.75" max="3" step="0.05" value="1" aria-label="Playback speed" />
+          <span id="speed-value">1×</span>
+          <span>3×</span>
+        </div>
           <div id="tape-label">
             <span id="tape-side">SIDE A · RF-01</span>
             <span id="tape-title"></span>
@@ -748,6 +781,9 @@ function createControls(): {
     articleButton: shadow.querySelector<HTMLButtonElement>("#article-button")!,
     debugButton: shadow.querySelector<HTMLButtonElement>("#debug-button")!,
     speedButton: shadow.querySelector<HTMLButtonElement>("#speed-button")!,
+    speedPanel: shadow.querySelector<HTMLDivElement>("#speed-panel")!,
+    speedSlider: shadow.querySelector<HTMLInputElement>("#speed-slider")!,
+    speedValue: shadow.querySelector<HTMLSpanElement>("#speed-value")!,
     minimizeButton: shadow.querySelector<HTMLButtonElement>("#minimize-button")!,
     expandButton: shadow.querySelector<HTMLButtonElement>("#expand-button")!,
     miniActionButton: shadow.querySelector<HTMLButtonElement>("#mini-action-button")!,
