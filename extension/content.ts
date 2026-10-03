@@ -25,7 +25,7 @@ type ChunkAlignment = {
 };
 
 type PageSentenceHighlighter = {
-  set(ranges: Range[]): void;
+  set(ranges: Range[], selectionRange?: Range): void;
   clear(): void;
 };
 
@@ -77,7 +77,7 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
 
     const readingSource = range ? createSelectionSource(range) : null;
     if (readingSource) {
-      void startPlayback(controls, readingSource, "Selected text");
+      void startPlayback(controls, readingSource, "Selected text", range);
       controls.selectionButton.hidden = true;
     }
   });
@@ -121,16 +121,30 @@ function createPageSentenceHighlighter(): PageSentenceHighlighter | null {
 
   const name = "readflow-current-sentence";
   const highlight = new HighlightConstructor();
+  const selectedPassage = new HighlightConstructor();
+  const selectedSentence = new HighlightConstructor();
+  selectedSentence.priority = 1;
   registry.set(name, highlight);
+  registry.set("readflow-selected-passage", selectedPassage);
+  registry.set("readflow-selected-sentence", selectedSentence);
   pageSentenceHighlighter = {
-    set(ranges) {
+    set(ranges, selectionRange) {
       highlight.clear();
+      selectedSentence.clear();
+      if (!selectionRange) {
+        selectedPassage.clear();
+      } else if (!selectedPassage.has(selectionRange)) {
+        selectedPassage.clear();
+        selectedPassage.add(selectionRange);
+      }
       for (const range of ranges) {
-        highlight.add(range);
+        (selectionRange ? selectedSentence : highlight).add(range);
       }
     },
     clear() {
       highlight.clear();
+      selectedPassage.clear();
+      selectedSentence.clear();
     },
   };
   return pageSentenceHighlighter;
@@ -740,6 +754,7 @@ async function startPlayback(
   controls: ReturnType<typeof createControls>,
   readingSource: ReadingSource,
   source: string,
+  selectionRange?: Range,
 ): Promise<void> {
   stopCurrentPlayback?.();
   controls.playerControls.hidden = true;
@@ -762,6 +777,10 @@ async function startPlayback(
   }
   const port = chrome.runtime.connect({ name: "readflow-tts" });
   const highlighter = createPageSentenceHighlighter();
+  if (highlighter && selectionRange) {
+    highlighter.set([], selectionRange);
+    window.getSelection()?.removeAllRanges();
+  }
   const alignmentsByChunk = new Map<number, ChunkAlignment>();
   let locatedWords: SentenceTiming[] = [];
   let currentSentenceKey = "";
@@ -1015,7 +1034,7 @@ async function startPlayback(
     pendingSeekFrame = waiting ? targetFrame : null;
     nextStart = 0;
     playbackComplete = false;
-    highlighter?.clear();
+    highlighter?.set([], selectionRange);
     currentSentenceKey = "";
     controls.pauseButton.textContent = context.state === "running" ? "Pause" : "Play";
 
@@ -1084,7 +1103,7 @@ async function startPlayback(
     }
 
     if (!word || !highlighter) {
-      highlighter?.clear();
+      highlighter?.set([], selectionRange);
       currentSentenceKey = "";
       return;
     }
@@ -1092,7 +1111,7 @@ async function startPlayback(
       return;
     }
 
-    highlighter?.set(word.ranges);
+    highlighter?.set(word.ranges, selectionRange);
     currentSentenceKey = word.sentenceKey;
   };
 

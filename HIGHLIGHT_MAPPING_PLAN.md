@@ -25,6 +25,7 @@ Keep the existing sentence cue appearance, sentence segmentation policy, audio c
 Selection ranges become part of the source map, removing the need to clip page-wide ranges during playback.
 Changing highlight colors is a separate milestone.
 The PR integration preserves the sentence capitalization fix already merged into main.
+It also preserves main's persistent selected-passage background and spoken-sentence styling.
 
 ## Commits
 
@@ -38,6 +39,7 @@ TypeScript checking and the production build pass.
 The actual built player was checked in the in-app browser using synthetic PCM and controlled timestamps.
 The first occurrence highlighted at 9 seconds, seeking forward highlighted the second at 24 seconds, and rewinding returned to the first.
 Selected-text playback highlighted only the second selected “Keep going.”
+After the PR merge, a fresh browser check confirmed the full second passage keeps its background while the spoken sentence advances.
 The original page had zero temporary source-marker attributes.
 These browser checks validate mapping and controls; live Fish Audio synchronization has not been tested in this milestone.
 
