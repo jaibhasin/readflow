@@ -22,6 +22,28 @@ test("repeated article text retains each original paragraph instead of the navig
   assert.equal(source.text.indexOf("Keep going.", second + 1), -1);
 });
 
+test("table-based essays with line breaks retain live text locations without changing the page", () => {
+  const document = new JSDOM(`<title>Essay</title><table><tr><td><div class='menu'><a href='/'>Home</a><br><a href='/essays'>Essays</a></div></td><td><font>September 2026<br><br><span id='first'>First passage. ${paragraph}</span><br><br><span id='second'>Second passage. ${paragraph}</span></font></td></tr></table>`).window.document;
+  const before = document.body.innerHTML;
+  const source = createArticleSource(document);
+  assert.ok(source);
+  assert.ok(source.text.includes("First passage."));
+  assert.ok(source.text.includes("Second passage."));
+  assert.ok(!source.text.includes("Home"));
+  assert.ok(!source.text.includes("Essays"));
+  const second = source.text.indexOf("Second passage.");
+  assert.equal(sourceRanges(source, second, second + 15)[0].startContainer, document.getElementById("second").firstChild);
+  assert.equal(document.body.innerHTML, before);
+});
+
+test("a table-based navigation page does not become an article", () => {
+  const links = Array.from({ length: 40 }, (_, index) => `<a href='/post-${index}'>Read another detailed article about this interesting topic</a><br>`).join("");
+  const document = new JSDOM(`<table><tr><td>${links}</td></tr></table>`).window.document;
+  const before = document.body.innerHTML;
+  assert.equal(createArticleSource(document), null);
+  assert.equal(document.body.innerHTML, before);
+});
+
 test("inline formatting retains exact text nodes and spaces", () => {
   const document = new JSDOM("<p>Hello <strong>world</strong>.</p>").window.document;
   const selection = document.createRange();
