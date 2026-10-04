@@ -32,6 +32,8 @@ export default defineConfig({
         mkdirSync("dist", { recursive: true });
         cpSync("extension/manifest.json", "dist/manifest.json");
         cpSync("extension/highlight.css", "dist/highlight.css");
+        cpSync("LICENSE", "dist/LICENSE");
+        cpSync("extension/READABILITY-LICENSE.txt", "dist/READABILITY-LICENSE.txt");
         cpSync("extension/SOUNDTOUCH-LICENSE.txt", "dist/SOUNDTOUCH-LICENSE.txt");
         cpSync("extension/THIRD_PARTY_NOTICES.md", "dist/THIRD_PARTY_NOTICES.md");
       },
