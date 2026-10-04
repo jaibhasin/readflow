@@ -37,6 +37,7 @@ type WordTiming = {
 };
 
 type ChunkAlignment = {
+  sectionIndex: number;
   offset: number;
   segments: WordTiming[];
 };
@@ -1498,15 +1499,23 @@ async function startPlayback(
   };
 
   const rebuildWordRanges = (): void => {
-    const segments = Array.from(alignmentsByChunk.values()).flatMap((snapshot) =>
-      snapshot.segments.map((segment) => ({
-        text: segment.text,
-        start: snapshot.offset + segment.start,
-        end: snapshot.offset + segment.end,
-      })),
-    ).sort((left, right) => left.start - right.start);
-    locatedWords = mapSentenceTimings(playbackSource, spoken, segments);
-    readingOffsets = mapReadingOffsets(spoken, segments);
+    locatedWords = [];
+    readingOffsets = [];
+    let alignmentWordCount = 0;
+    for (const section of sections) {
+      const segments = Array.from(alignmentsByChunk.values()).filter((snapshot) => snapshot.sectionIndex === section.index)
+        .flatMap((snapshot) => snapshot.segments.map((segment) => ({
+          text: segment.text,
+          start: snapshot.offset + segment.start,
+          end: snapshot.offset + segment.end,
+        }))).sort((left, right) => left.start - right.start);
+      const sectionSpoken = { text: section.text, sourceOffsets: spoken.sourceOffsets.slice(section.start, section.end) };
+      locatedWords.push(...mapSentenceTimings(playbackSource, sectionSpoken, segments));
+      readingOffsets.push(...mapReadingOffsets(sectionSpoken, segments));
+      alignmentWordCount += segments.length;
+    }
+    locatedWords.sort((left, right) => left.start - right.start);
+    readingOffsets.sort((left, right) => left.start - right.start);
     currentSentenceKey = "";
     const mappedWords = locatedWords.filter((word) => word.ranges.length);
     const mismatch = locatedWords.find((word) => !word.ranges.length);
@@ -1517,7 +1526,7 @@ async function startPlayback(
     if (!didReportHighlightMapping) {
       recordClientEvent("highlight_mapping", undefined, {
         mapped_words: mappedWords.length,
-        alignment_words: segments.length,
+        alignment_words: alignmentWordCount,
       });
       didReportHighlightMapping = true;
     }
@@ -1625,6 +1634,7 @@ async function startPlayback(
         queueAudio(message.audio_base64, sectionIndex);
         if (typeof message.chunk_seq === "number" && message.alignment?.segments?.length) {
           alignmentsByChunk.set(`${sectionIndex}:${message.chunk_seq}`, {
+            sectionIndex,
             offset: typeof message.chunk_audio_offset_sec === "number" ? message.chunk_audio_offset_sec : 0,
             segments: message.alignment.segments,
           });

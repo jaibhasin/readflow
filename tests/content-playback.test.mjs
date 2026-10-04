@@ -20,7 +20,7 @@ const voices = [
 ];
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-async function fixture({ resume = false } = {}) {
+async function fixture({ resume = false, savedReads = [] } = {}) {
   const dom = new JSDOM(`<!doctype html><title>Playback review</title><article>
     <h1>Playback review</h1>
     <p id="first">First passage explains how reading controls work together on an article page.
@@ -34,7 +34,7 @@ async function fixture({ resume = false } = {}) {
   </article>`, { url: "https://example.com/article", runScripts: "outside-only", pretendToBeVisual: true });
   const { window } = dom;
   const source = createArticleSource(window.document);
-  const reads = [];
+  const reads = structuredClone(savedReads);
   const messages = [];
   const ports = [];
   const contexts = [];
@@ -127,7 +127,7 @@ async function fixture({ resume = false } = {}) {
     port.emit({
       event: "audio", section_index: 0, section_start_frame: 0, chunk_seq: 0,
       audio_base64: Buffer.alloc(seconds * 44_100 * 2).toString("base64"),
-      alignment: { segments: start.text.trim().split(/\s+/).map((text, index) => ({ text, start: index * 0.1, end: (index + 1) * 0.1 })) },
+      alignment: { segments: start.sections[0].text.trim().split(/\s+/).map((text, index) => ({ text, start: index * 0.1, end: (index + 1) * 0.1 })) },
     });
     if (finish) port.emit({ event: "finish" });
   };
@@ -343,4 +343,56 @@ test("hiding the tab saves the audible word before animation frames are throttle
   f.window.document.dispatchEvent(new f.window.Event("visibilitychange"));
   await tick();
   assert.equal(f.messages.filter(message => message.type === "reading_progress").length, saves + 1);
+});
+
+test("jumping two paragraphs ahead resumes at the audible word after reopening the article", async t => {
+  const f = await fixture();
+  t.after(f.close);
+  await f.click("article-button");
+  f.audio();
+  f.advance(0.25);
+  const paragraph = f.window.document.getElementById("third");
+  const range = f.window.document.createRange();
+  range.setStart(paragraph.firstChild, 6);
+  range.setEnd(paragraph.firstChild, 13);
+  f.window.getSelection().addRange(range);
+  paragraph.dispatchEvent(new f.window.MouseEvent("dblclick", { bubbles: true }));
+  await tick();
+  const jumpedOffset = f.source.text.indexOf("passage", f.source.text.indexOf("Third passage"));
+  assert.equal(f.ports[1].sent.find(message => message.type === "start").text, f.source.text.slice(jumpedOffset));
+  f.audio();
+  f.advance(0.36);
+  await f.click("stop-button");
+  const expectedOffset = f.source.text.indexOf("enough", jumpedOffset);
+  assert.equal(f.reads[0].offset, expectedOffset);
+  const reopened = await fixture({ savedReads: f.reads });
+  t.after(reopened.close);
+  assert.equal(reopened.shadow.getElementById("article-button").textContent, "Resume read");
+  await reopened.click("article-button");
+  assert.equal(reopened.ports[0].sent.find(message => message.type === "start").text, f.source.text.slice(expectedOffset));
+  reopened.audio();
+  reopened.advance(0.25);
+  assert.equal(reopened.followed.at(-1).paragraph, "third");
+});
+
+test("later sections keep exact word checkpoints when earlier audio has no alignment", async t => {
+  const f = await fixture();
+  t.after(f.close);
+  await f.click("article-button");
+  const port = f.ports[0];
+  const start = port.sent.find(message => message.type === "start");
+  port.emit({ event: "audio", section_index: 0, section_start_frame: 0,
+    audio_base64: Buffer.alloc(4 * 44_100 * 2).toString("base64") });
+  const section = start.sections[1];
+  const words = [...section.text.matchAll(/\S+/g)];
+  port.emit({ event: "audio", section_index: 1, section_start_frame: 4 * 44_100,
+    chunk_seq: 0, chunk_audio_offset_sec: 4,
+    audio_base64: Buffer.alloc(4 * 44_100 * 2).toString("base64"),
+    alignment: { segments: words.map((word, index) => ({ text: word[0], start: index * 0.1, end: (index + 1) * 0.1 })) } });
+  f.advance(4.3);
+  await f.click("pause-button");
+  assert.equal(f.reads[0].offset, section.start + words[2].index);
+  await f.click("stop-button");
+  await f.click("article-button");
+  assert.equal(f.ports[1].sent.find(message => message.type === "start").text, f.source.text.slice(section.start + words[2].index));
 });
