@@ -2,6 +2,12 @@
   "name": "readflow",
   "private": true,
   "version": "0.1.0",
+  "description": "Listen to web articles and selected text with a cassette-style Chrome player.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jaibhasin/readflow.git"
+  },
   "type": "module",
   "scripts": {
     "build": "vite build",
