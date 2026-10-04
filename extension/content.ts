@@ -37,6 +37,7 @@ type WordTiming = {
 };
 
 type ChunkAlignment = {
+  sectionIndex: number;
   offset: number;
   segments: WordTiming[];
 };
@@ -1080,7 +1081,7 @@ async function startPlayback(
     recordClientEvent("highlight_api_unavailable");
   }
 
-  const persistProgress = (completed = false): void => {
+  const currentReadingOffset = (): number => {
     if (alignmentNeedsMapping) { rebuildWordRanges(); alignmentNeedsMapping = false; }
     const seconds = getAudibleFrame() / SAMPLE_RATE;
     let current: { start: number; offset: number } | undefined;
@@ -1088,13 +1089,20 @@ async function startPlayback(
       if (word.start > seconds) break;
       current = word;
     }
-    if (current && seconds > 0) checkpoint = startOffset + current.offset;
+    return startOffset + (current?.offset ?? 0);
+  };
+  const persistProgress = (completed = false): void => {
+    checkpoint = currentReadingOffset();
     void sendExtensionMessage<{ error?: string }>({ type: "reading_progress", id: reading.id, sessionId, offset: checkpoint, completed })
       .then((result) => { if (result.error) setPlayerStatus(controls, result.error); })
       .catch(() => setPlayerStatus(controls, "Reading progress could not be saved. Refresh this tab to reconnect."));
   };
   const pageHide = (): void => { cleanup(); };
+  const visibilityChange = (): void => {
+    if (document.visibilityState === "hidden" && !playbackComplete) persistProgress();
+  };
   window.addEventListener("pagehide", pageHide);
+  document.addEventListener("visibilitychange", visibilityChange);
 
   const cleanup = (recordStop = true): void => {
     if (stopped) {
@@ -1103,6 +1111,7 @@ async function startPlayback(
 
     if (!playbackComplete) persistProgress();
     window.removeEventListener("pagehide", pageHide);
+    document.removeEventListener("visibilitychange", visibilityChange);
     stopped = true;
     document.removeEventListener("dblclick", onArticleDoubleClick);
     setCurrentPlaybackSpeed = null;
@@ -1194,11 +1203,7 @@ async function startPlayback(
     if (stopped) return;
     const frame = pendingSeekFrame ?? getAudibleFrame();
     const currentSeconds = frame / SAMPLE_RATE;
-    let sourceOffset = startOffset;
-    for (const word of locatedWords) {
-      if (word.start > currentSeconds) break;
-      if (word.sourceOffset !== null) sourceOffset = startOffset + word.sourceOffset;
-    }
+    const sourceOffset = currentReadingOffset();
     const resumePaused = context.state === "suspended";
     cleanup(false);
     if (stopCurrentPlayback) stopCurrentPlayback = null;
@@ -1224,10 +1229,8 @@ async function startPlayback(
 
     // Recover from an unexpected worker restart at the current word. Preserve
     // pause state and the original source so later double-clicks can seek backward.
-    if (alignmentNeedsMapping) rebuildWordRanges();
     const seconds = getAudibleFrame() / SAMPLE_RATE;
-    const currentWord = [...locatedWords].reverse().find((word) => word.start <= seconds && word.sourceOffset !== null);
-    const sourceOffset = startOffset + (currentWord?.sourceOffset ?? 0);
+    const sourceOffset = currentReadingOffset();
     const resumePaused = context.state === "suspended";
     cleanup(false);
     void startPlayback(controls, readingSource, source, selectionRange, {
@@ -1496,15 +1499,23 @@ async function startPlayback(
   };
 
   const rebuildWordRanges = (): void => {
-    const segments = Array.from(alignmentsByChunk.values()).flatMap((snapshot) =>
-      snapshot.segments.map((segment) => ({
-        text: segment.text,
-        start: snapshot.offset + segment.start,
-        end: snapshot.offset + segment.end,
-      })),
-    ).sort((left, right) => left.start - right.start);
-    locatedWords = mapSentenceTimings(playbackSource, spoken, segments);
-    readingOffsets = mapReadingOffsets(spoken, segments);
+    locatedWords = [];
+    readingOffsets = [];
+    let alignmentWordCount = 0;
+    for (const section of sections) {
+      const segments = Array.from(alignmentsByChunk.values()).filter((snapshot) => snapshot.sectionIndex === section.index)
+        .flatMap((snapshot) => snapshot.segments.map((segment) => ({
+          text: segment.text,
+          start: snapshot.offset + segment.start,
+          end: snapshot.offset + segment.end,
+        }))).sort((left, right) => left.start - right.start);
+      const sectionSpoken = { text: section.text, sourceOffsets: spoken.sourceOffsets.slice(section.start, section.end) };
+      locatedWords.push(...mapSentenceTimings(playbackSource, sectionSpoken, segments));
+      readingOffsets.push(...mapReadingOffsets(sectionSpoken, segments));
+      alignmentWordCount += segments.length;
+    }
+    locatedWords.sort((left, right) => left.start - right.start);
+    readingOffsets.sort((left, right) => left.start - right.start);
     currentSentenceKey = "";
     const mappedWords = locatedWords.filter((word) => word.ranges.length);
     const mismatch = locatedWords.find((word) => !word.ranges.length);
@@ -1515,7 +1526,7 @@ async function startPlayback(
     if (!didReportHighlightMapping) {
       recordClientEvent("highlight_mapping", undefined, {
         mapped_words: mappedWords.length,
-        alignment_words: segments.length,
+        alignment_words: alignmentWordCount,
       });
       didReportHighlightMapping = true;
     }
@@ -1623,6 +1634,7 @@ async function startPlayback(
         queueAudio(message.audio_base64, sectionIndex);
         if (typeof message.chunk_seq === "number" && message.alignment?.segments?.length) {
           alignmentsByChunk.set(`${sectionIndex}:${message.chunk_seq}`, {
+            sectionIndex,
             offset: typeof message.chunk_audio_offset_sec === "number" ? message.chunk_audio_offset_sec : 0,
             segments: message.alignment.segments,
           });
