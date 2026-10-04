@@ -72,9 +72,7 @@ function buildSource(parts: SourcePart[]): ReadingSource {
 }
 
 export function createArticleSource(document: Document): ReadingSource | null {
-  if (!isProbablyReaderable(document)) {
-    return null;
-  }
+  const probablyReaderable = isProbablyReaderable(document);
   const clone = document.cloneNode(true) as Document;
   for (const element of Array.from(clone.querySelectorAll(`[${SOURCE_ATTRIBUTE}]`))) {
     element.removeAttribute(SOURCE_ATTRIBUTE);
@@ -96,6 +94,12 @@ export function createArticleSource(document: Document): ReadingSource | null {
   const article = new Readability(clone, { serializer: (node) => node }).parse();
   if (!article?.content) {
     return null;
+  }
+  if (!probablyReaderable) {
+    clone.body.replaceChildren(article.content);
+    if (!isProbablyReaderable(clone)) {
+      return null;
+    }
   }
   const parts = textNodes(article.content).filter((node) => !node.parentElement?.closest(EXCLUDED_SELECTOR)).map((node) => {
     const id = node.parentElement?.closest(`[${SOURCE_ATTRIBUTE}]`)?.getAttribute(SOURCE_ATTRIBUTE);
