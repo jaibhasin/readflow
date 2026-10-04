@@ -29,13 +29,12 @@ export function readingProgress(item: ReadingItem): { percent: number; remaining
   };
 }
 
-// Resume from the start of the current sentence so no unfinished words are lost.
 export function resumeOffset(text: string, offset: number): number {
-  const segmenter = new Intl.Segmenter(undefined, { granularity: "sentence" });
+  const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
   let start = 0;
-  for (const sentence of segmenter.segment(text)) {
-    if (sentence.index > offset) break;
-    start = sentence.index;
+  for (const word of segmenter.segment(text)) {
+    if (word.index > offset) break;
+    if (word.isWordLike) start = word.index;
   }
   return start;
 }

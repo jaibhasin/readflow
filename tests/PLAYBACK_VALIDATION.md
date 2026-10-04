@@ -40,3 +40,19 @@ Actual worker lifecycle behavior and live Fish Audio still need a check in the u
 
 After merging the newer saved-reading, voice-switching, and auto-scroll changes from `main`, the JavaScript suite runs with Node's default isolation so Chrome mocks remain local to each test file.
 Additional playback regressions cover cached seeking after a saved resume, seeking backward into earlier article text, and reconnecting at the absolute article offset while preserving pause state.
+
+## Accurate saved reading after a paragraph jump
+
+Validated on 2026-10-04 on branch `codex/fix-resume-reading`.
+
+`npm run check`, `npm run build`, `node --experimental-strip-types --test tests/*.test.mjs`, both Python bridge tests, and `git diff --check` passed.
+The JavaScript suite contains 104 passing tests.
+New regressions cover jumping two paragraphs ahead and reopening the article at the audible word, resuming without repeating its sentence, saving a rewind to the beginning, saving before a hidden tab throttles animation frames, and exact later-section checkpoints when earlier audio has no word timestamps.
+
+A temporary fixture ran the built content script in isolated Google Chrome with real Web Audio, synthetic PCM, a controlled extension port, and the bundled reading-list store persisted across reloads.
+It verified jumping from the first paragraph to a word two paragraphs ahead, pausing and saving there, reloading the page, resuming from the exact saved word, and highlighting the jumped-to paragraph.
+Rewinding the resumed audio to its beginning and resuming again in the same tab preserved its original article offset.
+The fixture used separate local ports so the running Fish Audio bridge was unaffected.
+
+These checks do not establish installed-extension worker behavior or live Fish Audio playback.
+Load this worktree's `dist/` in Chrome, reload the extension, refresh the article, and repeat the paragraph-jump and resume flow for a live provider check.

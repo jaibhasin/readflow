@@ -61,9 +61,11 @@ test("only playback completion marks a read complete; replay resets it", () => {
   assert.equal(item.offset, 0);
 });
 
-test("resume repeats the unfinished sentence, including at sentence boundaries", () => {
+test("resume repeats only the unfinished word, including at word boundaries", () => {
   assert.equal(resumeOffset(article.text, 0), 0);
-  assert.equal(resumeOffset(article.text, 23), 16);
+  assert.equal(resumeOffset(article.text, 20), 16);
+  assert.equal(resumeOffset(article.text, 26), 23);
+  assert.equal(resumeOffset(article.text, 23), 23);
   assert.equal(resumeOffset(article.text, 33), 33);
 });
 
