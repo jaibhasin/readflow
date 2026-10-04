@@ -299,3 +299,15 @@ test("connection recovery after saved resume retains the absolute word offset an
   f.advance(0.25);
   assert.equal(f.followed.at(-1).paragraph, "second");
 });
+
+test("reopening a saved read starts at its current word without repeating the sentence", async t => {
+  const f = await fixture({ resume: true });
+  t.after(f.close);
+  const wordOffset = f.source.text.indexOf("passage", f.source.text.indexOf("Second passage"));
+  await f.click("article-button");
+  assert.equal(f.ports[0].sent.find(message => message.type === "start").text, f.source.text.slice(wordOffset));
+  await f.click("stop-button");
+  assert.equal(f.reads[0].offset, wordOffset);
+  await f.click("article-button");
+  assert.equal(f.ports[1].sent.find(message => message.type === "start").text, f.source.text.slice(wordOffset));
+});
