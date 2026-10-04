@@ -144,7 +144,9 @@ Other formulas are left as written until Readflow has a reliable spoken form for
 ## Pending and future reads
 
 Click the Readflow toolbar icon or **Reads** in the player to view your reading list.
-**In progress** shows unfinished articles and selected passages, the percentage read, words left, and estimated listening time remaining at 1× (180 words per minute).
+Search your reads by title or site, including completed articles and passages.
+**In progress** shows unfinished articles and selected passages, the percentage read, and estimated listening time remaining at 1× (180 words per minute).
+Hover over the time estimate to see the words left.
 Progress follows the audio you have heard, including when you pause, stop, or seek.
 Readflow saves progress every five seconds and when you pause, stop, or leave the page.
 
