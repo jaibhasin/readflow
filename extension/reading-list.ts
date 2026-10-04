@@ -1,6 +1,8 @@
 import { READING_LIST_KEY, readingProgress, type ReadingItem } from "./reading-list-store.ts";
 
 const notice = document.querySelector<HTMLElement>("#notice")!;
+const search = document.querySelector<HTMLInputElement>("#search")!;
+let items: ReadingItem[] = [];
 async function message<T>(input: object): Promise<T> {
   const result = await chrome.runtime.sendMessage(input);
   if (result?.error) throw new Error(result.error);
@@ -26,10 +28,10 @@ function renderCard(item: ReadingItem): HTMLElement {
   const card = document.createElement("article");
   card.dataset.status = item.status;
   card.dataset.readId = item.id;
-  const label = document.createElement("div"); label.className = "tape-label";
-  const meta = document.createElement("div"); meta.className = "tape-meta";
-  const mark = document.createElement("span"); mark.className = "tape-mark";
-  mark.textContent = item.source === "selection" ? "PASSAGE" : "ARTICLE";
+  const label = document.createElement("div"); label.className = "read-heading";
+  const meta = document.createElement("div"); meta.className = "read-meta";
+  const mark = document.createElement("span"); mark.className = "read-kind";
+  mark.textContent = item.source === "selection" ? "Passage" : "Article";
   const title = document.createElement("h3");
   const link = document.createElement("a");
   link.className = "read-link";
@@ -38,6 +40,7 @@ function renderCard(item: ReadingItem): HTMLElement {
   link.target = "_blank";
   link.rel = "noopener noreferrer";
   link.textContent = item.title || "Untitled article";
+  link.title = link.textContent;
   link.setAttribute("aria-label", `Open ${link.textContent} in a new tab`);
   title.append(link);
   const site = document.createElement("p");
@@ -51,7 +54,8 @@ function renderCard(item: ReadingItem): HTMLElement {
   status.append(lead);
   if (item.status !== "completed") {
     const detail = document.createElement("span"); detail.className = "status-detail";
-    detail.textContent = item.status === "queued" ? `About ${minutes} min` : `${remainingWords.toLocaleString()} words left · About ${minutes} min left`;
+    detail.textContent = item.status === "queued" ? `About ${minutes} min` : `About ${minutes} min left`;
+    detail.title = `${remainingWords.toLocaleString()} words left`;
     status.append(" ", detail);
   }
   meta.append(mark, site); label.append(meta, title);
@@ -81,36 +85,45 @@ function renderCard(item: ReadingItem): HTMLElement {
   remove.dataset.action = "remove";
   remove.setAttribute("aria-label", `Remove ${item.title}`);
   action(remove, async () => { await message({ type: "reading_remove", id: item.id }); await render(); });
-  actions.append(open, remove); body.append(actions);
+  actions.append(open, remove); card.append(actions);
   return card;
 }
-async function render(): Promise<void> {
-  const { items } = await message<{ items: ReadingItem[] }>({ type: "reading_list" });
+async function render(refresh = true): Promise<void> {
+  if (refresh) ({ items } = await message<{ items: ReadingItem[] }>({ type: "reading_list" }));
+  const query = search.value.trim().toLocaleLowerCase();
+  const matching = items.filter((item) => `${item.title} ${new URL(item.url).hostname}`.toLocaleLowerCase().includes(query));
+  document.querySelector("#library-summary")!.textContent = query ? `${matching.length} of ${items.length} reads` : `${items.length} saved ${items.length === 1 ? "read" : "reads"}`;
+  document.querySelector<HTMLElement>("#search-empty")!.hidden = !query || matching.length > 0;
   const focused = document.activeElement as HTMLElement | null;
   const focusedRead = focused?.closest<HTMLElement>("article")?.dataset.readId;
   const focusedAction = focused?.dataset.action;
   const sections = [
     { id: "pending", status: "in-progress", label: "In progress", empty: "No unfinished reads yet. Start listening to an article to see it here." },
-    { id: "future", status: "queued", label: "To read", empty: "Nothing saved for later. Use Save for later on an article, or save the current article above." },
+    { id: "future", status: "queued", label: "To read", empty: "Nothing saved for later. Use Save for later in an article's player to keep it here." },
     { id: "done", status: "completed", label: "Completed reads", empty: "Finished reads will appear here." },
   ];
   for (const section of sections) {
     const container = document.getElementById(section.id)!;
     container.replaceChildren();
-    const reads = items.filter((item) => item.status === section.status).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const reads = matching.filter((item) => item.status === section.status).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    container.closest<HTMLElement>("section, details")!.hidden = Boolean(query) && !reads.length;
     for (const item of reads) container.append(renderCard(item));
     if (!reads.length) empty(container, section.empty);
     if (section.id !== "done") {
       const heading = document.getElementById(`${section.id}-title`)!;
       const count = document.createElement("span"); count.className = "count"; count.textContent = `(${reads.length})`;
       heading.replaceChildren(`${section.label} `, count);
-    } else document.querySelector("#completed summary")!.textContent = `${section.label} (${reads.length})`;
+    } else {
+      document.querySelector("#completed summary")!.textContent = `${section.label} (${reads.length})`;
+      if (query && reads.length) document.querySelector<HTMLDetailsElement>("#completed")!.open = true;
+    }
   }
   if (focusedRead && focusedAction) {
     const card = Array.from(document.querySelectorAll<HTMLElement>("article")).find((item) => item.dataset.readId === focusedRead);
     card?.querySelector<HTMLElement>(`[data-action="${focusedAction}"]`)?.focus({ preventScroll: true });
   }
 }
+search.addEventListener("input", () => { void render(false); });
 action(document.querySelector("#debug")!, async () => { await message({ type: "open_diagnostics" }); });
 action(document.querySelector("#expand")!, async () => { await message({ type: "open_reading_list" }); });
 action(document.querySelector("#save")!, async () => {
