@@ -311,3 +311,36 @@ test("reopening a saved read starts at its current word without repeating the se
   await f.click("article-button");
   assert.equal(f.ports[1].sent.find(message => message.type === "start").text, f.source.text.slice(wordOffset));
 });
+
+test("rewinding to the beginning saves zero even before another word is audible", async t => {
+  const f = await fixture();
+  t.after(f.close);
+  await f.click("article-button");
+  f.audio();
+  f.advance(1.25);
+  await f.click("pause-button");
+  assert.ok(f.reads[0].offset > 0);
+  await f.click("rewind-button");
+  await f.click("stop-button");
+  assert.equal(f.reads[0].offset, 0);
+  await f.click("article-button");
+  assert.equal(f.ports[1].sent.find(message => message.type === "start").text, f.source.text);
+});
+
+test("hiding the tab saves the audible word before animation frames are throttled", async t => {
+  const f = await fixture();
+  t.after(f.close);
+  await f.click("article-button");
+  f.audio();
+  f.advance(1.25);
+  assert.equal(f.reads[0].offset, 0, "periodic progress has not run yet");
+  Object.defineProperty(f.window.document, "visibilityState", { value: "hidden" });
+  f.window.document.dispatchEvent(new f.window.Event("visibilitychange"));
+  await tick();
+  assert.ok(f.reads[0].offset > 0);
+  const saves = f.messages.filter(message => message.type === "reading_progress").length;
+  await f.click("stop-button");
+  f.window.document.dispatchEvent(new f.window.Event("visibilitychange"));
+  await tick();
+  assert.equal(f.messages.filter(message => message.type === "reading_progress").length, saves + 1);
+});

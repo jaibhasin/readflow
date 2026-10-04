@@ -1080,7 +1080,7 @@ async function startPlayback(
     recordClientEvent("highlight_api_unavailable");
   }
 
-  const persistProgress = (completed = false): void => {
+  const currentReadingOffset = (): number => {
     if (alignmentNeedsMapping) { rebuildWordRanges(); alignmentNeedsMapping = false; }
     const seconds = getAudibleFrame() / SAMPLE_RATE;
     let current: { start: number; offset: number } | undefined;
@@ -1088,13 +1088,20 @@ async function startPlayback(
       if (word.start > seconds) break;
       current = word;
     }
-    if (current && seconds > 0) checkpoint = startOffset + current.offset;
+    return startOffset + (current?.offset ?? 0);
+  };
+  const persistProgress = (completed = false): void => {
+    checkpoint = currentReadingOffset();
     void sendExtensionMessage<{ error?: string }>({ type: "reading_progress", id: reading.id, sessionId, offset: checkpoint, completed })
       .then((result) => { if (result.error) setPlayerStatus(controls, result.error); })
       .catch(() => setPlayerStatus(controls, "Reading progress could not be saved. Refresh this tab to reconnect."));
   };
   const pageHide = (): void => { cleanup(); };
+  const visibilityChange = (): void => {
+    if (document.visibilityState === "hidden" && !playbackComplete) persistProgress();
+  };
   window.addEventListener("pagehide", pageHide);
+  document.addEventListener("visibilitychange", visibilityChange);
 
   const cleanup = (recordStop = true): void => {
     if (stopped) {
@@ -1103,6 +1110,7 @@ async function startPlayback(
 
     if (!playbackComplete) persistProgress();
     window.removeEventListener("pagehide", pageHide);
+    document.removeEventListener("visibilitychange", visibilityChange);
     stopped = true;
     document.removeEventListener("dblclick", onArticleDoubleClick);
     setCurrentPlaybackSpeed = null;
@@ -1194,11 +1202,7 @@ async function startPlayback(
     if (stopped) return;
     const frame = pendingSeekFrame ?? getAudibleFrame();
     const currentSeconds = frame / SAMPLE_RATE;
-    let sourceOffset = startOffset;
-    for (const word of locatedWords) {
-      if (word.start > currentSeconds) break;
-      if (word.sourceOffset !== null) sourceOffset = startOffset + word.sourceOffset;
-    }
+    const sourceOffset = currentReadingOffset();
     const resumePaused = context.state === "suspended";
     cleanup(false);
     if (stopCurrentPlayback) stopCurrentPlayback = null;
@@ -1224,10 +1228,8 @@ async function startPlayback(
 
     // Recover from an unexpected worker restart at the current word. Preserve
     // pause state and the original source so later double-clicks can seek backward.
-    if (alignmentNeedsMapping) rebuildWordRanges();
     const seconds = getAudibleFrame() / SAMPLE_RATE;
-    const currentWord = [...locatedWords].reverse().find((word) => word.start <= seconds && word.sourceOffset !== null);
-    const sourceOffset = startOffset + (currentWord?.sourceOffset ?? 0);
+    const sourceOffset = currentReadingOffset();
     const resumePaused = context.state === "suspended";
     cleanup(false);
     void startPlayback(controls, readingSource, source, selectionRange, {
