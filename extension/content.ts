@@ -53,6 +53,8 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
   let savedRead: ReadingItem | undefined;
   const readingLookup = sendExtensionMessage<{ item?: ReadingItem; error?: string }>({ type: "reading_for_page" }).then((result) => {
     savedRead = result.item;
+    controls.saveButton.setAttribute("aria-pressed", String(Boolean(savedRead)));
+    if (savedRead) controls.saveButton.title = "Saved to your reads";
     if (savedRead?.status === "in-progress") controls.articleButton.textContent = "Resume read";
     else if (savedRead?.source === "selection") controls.articleButton.textContent = "Listen to saved passage";
   }).catch(() => undefined);
@@ -64,7 +66,8 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
       type: "reading_save", item: { url: location.href, title: document.title, source: "article", text: article.text },
     });
     if (result.error) return { error: result.error };
-    controls.saveButton.textContent = "Saved for later";
+    controls.saveButton.setAttribute("aria-pressed", "true");
+    controls.saveButton.title = "Saved to your reads";
     return { ok: true };
   };
   controls.saveButton.addEventListener("click", () => {
@@ -356,10 +359,13 @@ function createControls(): {
         animation: power-glow 1.8s ease-in-out infinite;
       }
 
-      #save-actions { display: flex; gap: 8px; margin-top: 12px; border-top: 1px solid #46534f; padding-top: 9px; }
-      #save-actions button { flex: 1; font-size: 11px; padding: 5px 8px; min-height: 30px; border-radius: 6px; background: #273234; border-color: #53615d; box-shadow: inset 0 1px rgb(255 255 255 / 5%); color: #c6d2c8; }
-      #save-actions button:hover { background: #354144; border-color: #819076; color: #e4edc0; }
-      #save-button::before { content: "+"; color: #d6e986; margin-right: 6px; font: 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      #tape-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      #save-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+      #save-actions button { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 9px; padding: 0 5px; min-height: 24px; border-radius: 4px; background: transparent; border: 1px solid transparent; box-shadow: none; color: #59624d; }
+      #save-actions button:hover { background: rgb(48 56 47 / 8%); border-color: #a0a58c; color: #26312d; }
+      #save-actions button:focus-visible { outline-color: #596b35; outline-offset: 1px; }
+      #save-button { min-width: 24px; }
+      #save-button[aria-pressed="true"] svg { fill: #596b35; color: #596b35; }
       #debug-button {
         background: transparent;
         border: 0;
@@ -842,7 +848,13 @@ function createControls(): {
           </div>
         </div>
           <div id="tape-label">
-            <span id="tape-side">SIDE A · RF-01</span>
+            <div id="tape-heading">
+              <span id="tape-side">SIDE A · RF-01</span>
+              <div id="save-actions">
+                <button id="save-button" type="button" title="Save for later" aria-label="Save for later" aria-pressed="false"><svg width="13" height="15" viewBox="0 0 16 18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 2h8a1 1 0 0 1 1 1v13l-5-3-5 3V3a1 1 0 0 1 1-1Z"/></svg></button>
+                <button id="reads-button" type="button" title="Open your reading list" aria-label="Open your reading list">Reads ↗</button>
+              </div>
+            </div>
             <span id="tape-title"></span>
             <div id="tape-footer"><span id="tape-site"></span></div>
           </div>
@@ -858,7 +870,6 @@ function createControls(): {
           <button id="stop-button" type="button">Stop</button>
         </div>
         <button id="article-button" type="button">Listen to article</button>
-        <div id="save-actions"><button id="save-button" type="button">Save for later</button><button id="reads-button" type="button">Reads</button></div>
         </div>
         <div id="mini-player" hidden>
           <span id="mini-mark" aria-hidden="true">RF</span>

@@ -181,6 +181,9 @@ test("save for later, player sizing, speed, pause, and seek preserve the current
   t.after(f.close);
   await f.click("save-button");
   assert.equal(f.reads[0].status, "queued");
+  assert.equal(f.shadow.getElementById("save-button").getAttribute("aria-pressed"), "true");
+  assert.equal(f.shadow.getElementById("save-button").closest("#tape-heading") !== null, true);
+  assert.equal(f.shadow.querySelector("#save-button svg") !== null, true);
   assert.equal(f.ports.length, 0);
   await f.click("reads-button");
   await f.click("debug-button");
