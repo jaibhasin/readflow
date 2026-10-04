@@ -1,6 +1,6 @@
-# Readflow 📼 - Listen while you read.
+# Readflow 📼
 
-> Listen to web articles without losing your place.
+> Listen to web articles without losing your pace.
 
 [![CI](https://github.com/jaibhasin/readflow/actions/workflows/ci.yml/badge.svg)](https://github.com/jaibhasin/readflow/actions/workflows/ci.yml)
 [![Chrome](https://img.shields.io/badge/Chrome-Manifest_V3-4285F4)](extension/manifest.json)
