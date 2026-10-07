@@ -20,7 +20,7 @@ const voices = [
 ];
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-async function fixture({ resume = false, savedReads = [] } = {}) {
+async function fixture({ resume = false, savedReads = [], playbackSettings = {}, loadSpeed = async () => playbackSettings.rate } = {}) {
   const dom = new JSDOM(`<!doctype html><title>Playback review</title><article>
     <h1>Playback review</h1>
     <p id="first">First passage explains how reading controls work together on an article page.
@@ -84,6 +84,8 @@ async function fixture({ resume = false, savedReads = [] } = {}) {
       onMessage: { addListener() {} },
       async sendMessage(message) {
         messages.push(structuredClone(message));
+        if (message.type === "playback_settings") return { rate: await loadSpeed() };
+        if (message.type === "select_playback_rate") playbackSettings.rate = message.rate;
         if (message.type === "voice_settings") return { selected: voices[0], favorites: voices };
         if (message.type === "reading_for_page") return { item: structuredClone(reads[0]) };
         if (message.type === "reading_save") return { item: structuredClone(saveReading(reads, message.item, message.sessionId)) };
@@ -138,6 +140,53 @@ async function fixture({ resume = false, savedReads = [] } = {}) {
   };
   return { window, source, reads, messages, ports, contexts, shadow, followed, click, advance, audio, chooseVoice, close: () => dom.window.close() };
 }
+
+test("speed survives reopening pages and stays at 1x after an explicit reset", async t => {
+  const playbackSettings = {};
+  const first = await fixture({ playbackSettings });
+  t.after(first.close);
+  const slider = first.shadow.getElementById("speed-slider");
+  slider.value = "1.2";
+  slider.dispatchEvent(new first.window.Event("input"));
+  await tick();
+  first.close();
+
+  const reopened = await fixture({ playbackSettings, resume: true });
+  t.after(reopened.close);
+  assert.equal(reopened.shadow.getElementById("speed-slider").value, "1.2");
+  assert.equal(reopened.shadow.getElementById("speed-button").textContent, "1.2×");
+  assert.equal(reopened.shadow.getElementById("speed-value").textContent, "1.2×");
+  await reopened.click("article-button");
+  assert.equal(reopened.ports[0].sent.find(message => message.type === "start").rate, 1.2);
+  await reopened.chooseVoice("Mira");
+  assert.equal(reopened.ports.at(-1).sent.find(message => message.type === "start").rate, 1.2);
+  const reset = reopened.shadow.getElementById("speed-slider");
+  reset.value = "1";
+  reset.dispatchEvent(new reopened.window.Event("input"));
+  await tick();
+  reopened.close();
+
+  const resetPage = await fixture({ playbackSettings });
+  t.after(resetPage.close);
+  await resetPage.click("article-button");
+  assert.equal(resetPage.ports[0].sent.find(message => message.type === "start").rate, 1);
+});
+
+test("playback waits for saved speed without overwriting a newer slider change", async t => {
+  let resolveSpeed;
+  const savedSpeed = new Promise(resolve => { resolveSpeed = resolve; });
+  const f = await fixture({ loadSpeed: () => savedSpeed });
+  t.after(f.close);
+  await f.click("article-button");
+  assert.equal(f.ports.length, 0);
+  const slider = f.shadow.getElementById("speed-slider");
+  slider.value = "1.3";
+  slider.dispatchEvent(new f.window.Event("input"));
+  resolveSpeed(1.2);
+  await tick();
+  assert.equal(f.shadow.getElementById("speed-button").textContent, "1.3×");
+  assert.equal(f.ports[0].sent.find(message => message.type === "start").rate, 1.3);
+});
 
 test("saved progress, highlighting, and auto-scroll share the same source after repeated voice changes", async t => {
   const f = await fixture({ resume: true });
