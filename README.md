@@ -74,6 +74,29 @@ curl http://127.0.0.1:4179/health
 
 The response should be `{"status":"ok"}`.
 
+### Automatic startup on macOS
+
+To keep the bridge available without a terminal, install a background service once after `uv sync` and configuring `.env`.
+Stop any bridge you already started in a terminal before installing.
+Choose a permanent checkout rather than a temporary worktree; the service uses that folder and its Python environment.
+
+```sh
+python3 scripts/bridge-service.py install
+```
+
+The bridge starts immediately, starts again when you log in, and restarts if it exits.
+It listens only on `127.0.0.1:4179` and continues reading the key from the project's `.env`.
+Your Mac must be awake and connected to the internet to generate speech.
+Logs are stored in `~/Library/Logs/Readflow/`.
+
+```sh
+python3 scripts/bridge-service.py status
+python3 scripts/bridge-service.py uninstall
+```
+
+Uninstalling removes automatic startup and stops the managed bridge while preserving your key and logs.
+If you move the checkout or recreate its Python environment, run the install command again.
+
 ## Build the Chrome extension
 
 Install the JavaScript dependencies once.
@@ -90,12 +113,16 @@ npm run build
 
 Open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select this project's `dist/` folder.
 After rebuilding, click **Reload** on the Readflow extension card, then refresh the article tab so Chrome replaces its old page script.
-Keep the local bridge running while listening.
+Keep the local bridge running while listening, or use the macOS background service above.
 
 ## Listen on the page
 
 Open an article page after loading the extension.
-Readflow shows its player when it detects readable article content.
+Pin Readflow in Chrome's extensions menu, then click its toolbar icon to show the compact Walkman on the current page.
+Click **▶** to listen, or **⌃** to expand the player.
+Opening websites does not show the player or start listening automatically.
+The player can also read selected passages on ordinary pages without a detected article.
+Chrome's internal pages and other protected pages cannot show the player.
 
 | Action | How |
 | --- | --- |
@@ -143,15 +170,15 @@ Other formulas are left as written until Readflow has a reliable spoken form for
 
 ## Pending and future reads
 
-Click the Readflow toolbar icon or **Reads** in the player to view your reading list.
+Click the Readflow toolbar icon, expand the Walkman with **⌃**, and choose **Reads** to view your reading list.
 Search your reads by title or site, including completed articles and passages.
 **In progress** shows unfinished articles and selected passages, the percentage read, and estimated listening time remaining at 1× (180 words per minute).
 Hover over the time estimate to see the words left.
 Progress follows the audio you have heard, including when you pause, stop, or seek.
 Readflow saves progress every five seconds and when you pause, stop, or leave the page.
 
-Choose **Save for later** in the article player or **Save current article** in the extension popup to add an article to **To read** without starting audio.
-Click a read card, **Resume**, or **Start reading** to open its source link in a new tab, then click **Resume read** or **Listen to article** in its player.
+Choose **Save for later** in the article player to add an article to **To read** without starting audio.
+Click a read card, **Resume**, or **Start reading** to open its source link in a new tab, then summon Readflow from the toolbar and click **▶** to resume.
 Resuming starts at the beginning of the unfinished sentence.
 Selected passages can also be resumed.
 If an article's text changes, Readflow offers to start its current text rather than applying the old progress to different content.
