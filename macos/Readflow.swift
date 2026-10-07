@@ -41,6 +41,7 @@ final class ReadflowApp: NSObject, NSApplicationDelegate {
         window.title = "Readflow"
         window.isReleasedWhenClosed = false
         let mark = NSImageView(image: NSImage(systemSymbolName: "play.rectangle.fill", accessibilityDescription: "Readflow")!)
+        mark.imageScaling = .scaleProportionallyUpOrDown
         mark.contentTintColor = .controlAccentColor
         mark.setContentHuggingPriority(.required, for: .vertical)
         mark.widthAnchor.constraint(equalToConstant: 48).isActive = true
