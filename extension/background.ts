@@ -1,4 +1,5 @@
 import { handleReadingMessage } from "./reading-list-background";
+import "./toolbar";
 import {
   appendTraceEvent,
   consumeDetailedCapture,
