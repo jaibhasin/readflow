@@ -26,7 +26,6 @@ const DEFAULT_VOICE: FishVoice = {
   name: "Selene",
   languages: ["en"],
 };
-const initialArticleSource = createArticleSource(document);
 let pageSentenceHighlighter: PageSentenceHighlighter | null = null;
 const voicePickers = new WeakMap<HTMLElement, ReturnType<typeof createVoicePicker>>();
 
@@ -44,9 +43,10 @@ type ChunkAlignment = {
 
 type TransportState = "idle" | "connecting" | "buffering" | "playing" | "paused" | "finished" | "stopped" | "error";
 
-if (initialArticleSource && !document.getElementById("readflow-controls")) {
+if (!document.getElementById("readflow-controls")) {
   const controls = createControls();
   document.documentElement.append(controls.host);
+  setCompactMode(controls, true);
   const voicePicker = createVoicePicker(controls.host.shadowRoot!, controls.dock, (voice) => changePlaybackVoice?.(voice));
   voicePickers.set(controls.host, voicePicker);
 
@@ -81,6 +81,12 @@ if (initialArticleSource && !document.getElementById("readflow-controls")) {
     void sendExtensionMessage({ type: "open_reading_list" }).catch(() => setPlayerStatus(controls, RECONNECT_MESSAGE));
   });
   extensionRuntime().onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.type === "show_readflow") {
+      controls.host.hidden = false;
+      controls.expandButton.focus({ preventScroll: true });
+      sendResponse({ ok: true });
+      return;
+    }
     if (message.type !== "save_read") return;
     void saveForLater().then(sendResponse).catch(() => sendResponse({ error: RECONNECT_MESSAGE }));
     return true;
