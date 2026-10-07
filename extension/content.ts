@@ -7,6 +7,7 @@ import { createArticleSource, createSelectionSource, selectedWordOffset, sliceRe
 import { createReadingAutoScroller } from "./auto-scroll";
 import { bufferFramesForSpeed, isAudioAudible, playbackDuration, playedFrames } from "./playback-speed";
 import { StreamingTimeStretch } from "./time-stretch";
+import { isPlaybackRate } from "./playback-settings";
 import { resolveSeekTarget } from "./seek-target";
 import { prepareSpokenSource } from "./spoken-text";
 import { splitTextSections } from "./text-sections";
@@ -19,6 +20,7 @@ let stopCurrentPlayback: (() => void) | null = null;
 let setCurrentPlaybackSpeed: ((rate: number) => void) | null = null;
 let changePlaybackVoice: ((voice: FishVoice) => void) | null = null;
 let selectedPlaybackRate = 1;
+let playbackSettingsReady: Promise<void> = Promise.resolve();
 const SAMPLE_RATE = 44_100;
 const START_BUFFER_SECONDS = 3;
 const DEFAULT_VOICE: FishVoice = {
@@ -149,15 +151,36 @@ if (!document.getElementById("readflow-controls")) {
     }
   });
 
-  controls.speedSlider.addEventListener("input", () => {
-    selectedPlaybackRate = Number(controls.speedSlider.value);
+  const updateSpeedControls = (): void => {
+    controls.speedSlider.value = String(selectedPlaybackRate);
     const label = `${selectedPlaybackRate.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}×`;
     controls.speedButton.textContent = label;
     controls.speedButton.title = `Playback speed: ${selectedPlaybackRate} times`;
     controls.speedButton.setAttribute("aria-label", `Playback speed ${selectedPlaybackRate} times`);
     controls.speedValue.textContent = label;
     controls.speedSlider.setAttribute("aria-valuetext", `${selectedPlaybackRate} times`);
+  };
+  let speedChanged = false;
+  playbackSettingsReady = sendExtensionMessage<{ rate?: unknown }>({ type: "playback_settings" }).then((settings) => {
+    if (speedChanged || !isPlaybackRate(settings.rate)) return;
+    selectedPlaybackRate = settings.rate;
+    updateSpeedControls();
+  }).catch(() => undefined);
+
+  controls.speedSlider.addEventListener("input", () => {
+    speedChanged = true;
+    selectedPlaybackRate = Number(controls.speedSlider.value);
+    updateSpeedControls();
     setCurrentPlaybackSpeed?.(selectedPlaybackRate);
+    void sendExtensionMessage<{ error?: string }>({ type: "select_playback_rate", rate: selectedPlaybackRate }).then((result) => {
+      if (result.error) {
+        setPlayerStatus(controls, result.error);
+        controls.status.hidden = false;
+      }
+    }).catch(() => {
+      setPlayerStatus(controls, RECONNECT_MESSAGE);
+      controls.status.hidden = false;
+    });
   });
 
   controls.minimizeButton.addEventListener("click", () => {
@@ -982,6 +1005,7 @@ async function startPlayback(
   options: { sourceOffset?: number; elapsedSeconds?: number; voice?: FishVoice; resumePaused?: boolean; startBufferSeconds?: number; recoveryAttempts?: number } = {},
   savedRead?: ReadingItem,
 ): Promise<void> {
+  await playbackSettingsReady;
   const picker = voicePickers.get(controls.host);
   await picker?.ready;
   const voice: FishVoice = options.voice ?? picker?.selectedVoice ?? DEFAULT_VOICE;
