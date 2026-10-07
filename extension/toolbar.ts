@@ -2,11 +2,11 @@ export async function showWalkman(tab: chrome.tabs.Tab): Promise<void> {
   if (tab.id === undefined) return;
   const tabId = tab.id;
   try {
-    await chrome.tabs.sendMessage(tabId, { type: "show_readflow" });
-  } catch {
-    await chrome.scripting.insertCSS({ target: { tabId }, files: ["highlight.css"] });
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
-  }
+    const response = await chrome.tabs.sendMessage(tabId, { type: "show_readflow" });
+    if (response?.ok) return;
+  } catch {}
+  await chrome.scripting.insertCSS({ target: { tabId }, files: ["highlight.css"] });
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
 }
 
 chrome.action.onClicked.addListener((tab) => {

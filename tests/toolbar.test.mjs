@@ -6,11 +6,12 @@ const calls = [];
 let listener;
 let present = false;
 let blocked = false;
+let acknowledged = true;
 globalThis.chrome = {
   tabs: { async sendMessage(id, message) {
     calls.push(["message", id, message]);
     if (!present) throw new Error("No receiver");
-    return { ok: true };
+    return acknowledged ? { ok: true } : undefined;
   } },
   scripting: {
     async insertCSS(options) { calls.push(["css", options]); if (blocked) throw new Error("Restricted page"); },
@@ -41,6 +42,14 @@ test("first click injects styles and player, subsequent clicks reuse it", async 
   calls.length = 0;
   await showWalkman({ id: 7 });
   assert.deepEqual(calls, [["message", 7, { type: "show_readflow" }]]);
+});
+
+test("a stale script without activation support still receives the player", async () => {
+  calls.length = 0;
+  acknowledged = false;
+  await showWalkman({ id: 7 });
+  assert.ok(calls.some(([kind]) => kind === "script"));
+  acknowledged = true;
 });
 
 test("restricted pages show actionable toolbar feedback", async () => {
