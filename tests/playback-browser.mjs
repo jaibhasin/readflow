@@ -5,6 +5,8 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { prepareSpokenSource } from '../extension/spoken-text.ts';
+import { splitTextSections } from '../extension/text-sections.ts';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const requests = [];
@@ -61,8 +63,10 @@ try {
         if (message.type === 'reading_for_page') return {};
         if (message.type === 'reading_save') {
           const item = { ...message.item, id: 'fixture-read', offset: 0, status: 'in-progress', sessionId: message.sessionId };
+          window.__readingText = item.text;
           return { item };
         }
+        if (message.type === 'reading_progress') window.__readingProgress = message;
         return { ok: true };
       },
       connect: () => {
@@ -123,16 +127,23 @@ try {
   assert.doesNotMatch(await status(),/Paused|Refresh|lost/);
   assert.equal(await evaluate('window.__contexts.at(-1).state'), 'running');
   console.log('Cached double-click resumed:',await status());
-  await selectWord('p7',5,5); await wait(500);
+  await selectWord('p7',5,5); await wait(1500);
   assert.equal(requests[beforeCached].startsWith('going.'),true,'ungenerated word starts new request exactly there');
   console.log('Ungenerated double-click request:',requests[beforeCached].slice(0,70));
   await click('pause-button'); await wait(100);
   // Simulate an unexpected worker restart through its disconnected port.
-  await evaluate('window.__ports.at(-1).disconnect()'); await wait(1200);
+  const recoveryCheckpoint = await evaluate(`(()=>{
+    window.__ports.at(-1).disconnect();
+    return { text: window.__readingText, offset: window.__readingProgress.offset };
+  })()`);
+  await wait(1200);
   console.log('After simulated worker restart:',await status());
+  console.log('Recovery checkpoint:', recoveryCheckpoint.offset, recoveryCheckpoint.text.slice(recoveryCheckpoint.offset, recoveryCheckpoint.offset + 70));
+  console.log('Recovery request:', requests.at(-1).slice(0,70));
   assert.equal(await evaluate('window.__contexts.at(-1).state'), 'suspended');
   assert.match(await status(),/Paused/,'automatic recovery preserves pause');
-  assert.equal(requests.at(-1).startsWith('going.'),true,'recovery starts at the current source word');
+  const expectedRecovery = splitTextSections(prepareSpokenSource(recoveryCheckpoint.text.slice(recoveryCheckpoint.offset)).text)[0].text;
+  assert.equal(requests.at(-1),expectedRecovery,'recovery resumes exactly at the saved disconnect position');
   await evaluate('window.__ports.at(-1).disconnect()'); await wait(200);
   assert.match(await status(),/Press Listen/,'second disconnect ends bounded recovery');
   assert.doesNotMatch(await status(),/Refresh/);
