@@ -16,6 +16,7 @@ def app_metadata(project: Path) -> dict:
         "CFBundleDisplayName": "Readflow",
         "CFBundleIdentifier": "com.readflow.app",
         "CFBundleExecutable": "Readflow",
+        "CFBundleIconFile": "Readflow.icns",
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": "0.1.0",
         "CFBundleVersion": "1",
@@ -43,6 +44,12 @@ def build_app(project: Path, output: Path) -> None:
         with (contents / "Info.plist").open("wb") as metadata:
             plistlib.dump(app_metadata(project), metadata)
         shutil.copy2(ROOT / "macos/bridge_runner.py", resources / "bridge_runner.py")
+        iconset = Path(temporary) / "Readflow.iconset"
+        subprocess.run([
+            "xcrun", "swift", "-module-cache-path", str(Path(temporary) / "swift-cache"),
+            str(ROOT / "macos/AppIcon.swift"), str(iconset),
+        ], check=True)
+        subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(resources / "Readflow.icns")], check=True)
         subprocess.run([
             "xcrun", "swiftc", "-parse-as-library", "-swift-version", "5", "-O",
             "-target", f"{subprocess.check_output(['uname', '-m'], text=True).strip()}-apple-macosx13.0",

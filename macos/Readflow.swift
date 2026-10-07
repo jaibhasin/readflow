@@ -13,6 +13,7 @@ final class ReadflowApp: NSObject, NSApplicationDelegate {
     private let detail = NSTextField(wrappingLabelWithString: "Getting ready to read in Chrome.")
     private let spinner = NSProgressIndicator()
     private var retry: NSButton!
+    private var logButton: NSButton!
     private let logs = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/Readflow/app-bridge.log")
 
@@ -55,7 +56,8 @@ final class ReadflowApp: NSObject, NSApplicationDelegate {
         retry = NSButton(title: "Try Again", target: self, action: #selector(retryStart))
         retry.isHidden = true
         let quit = NSButton(title: "Quit Readflow", target: NSApp, action: #selector(NSApplication.terminate(_:)))
-        let logButton = NSButton(title: "View Log", target: self, action: #selector(viewLog))
+        logButton = NSButton(title: "View Log", target: self, action: #selector(viewLog))
+        logButton.isHidden = true
         let buttons = NSStackView(views: [retry, logButton, quit])
         buttons.spacing = 10
         let stack = NSStackView(views: [mark, status, detail, spinner, buttons])
@@ -84,6 +86,7 @@ final class ReadflowApp: NSObject, NSApplicationDelegate {
         status.stringValue = "Readflow couldn’t start"
         detail.stringValue = message
         retry.isHidden = false
+        logButton.isHidden = false
     }
 
     private func startBridge() {
@@ -134,6 +137,7 @@ final class ReadflowApp: NSObject, NSApplicationDelegate {
             server = process
             input = pipe.fileHandleForWriting
             retry.isHidden = true
+            logButton.isHidden = true
             spinner.isHidden = false
             spinner.startAnimation(nil)
             status.stringValue = "Starting Readflow…"
