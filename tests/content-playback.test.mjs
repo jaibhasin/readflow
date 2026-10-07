@@ -40,6 +40,7 @@ async function fixture({ resume = false, savedReads = [] } = {}) {
   const contexts = [];
   const frames = new Map();
   const followed = [];
+  const messageListeners = [];
   let frameId = 0;
   let now = 300;
   if (resume) {
@@ -81,7 +82,7 @@ async function fixture({ resume = false, savedReads = [] } = {}) {
   window.chrome = {
     runtime: {
       id: "review",
-      onMessage: { addListener() {} },
+      onMessage: { addListener(listener) { messageListeners.push(listener); } },
       async sendMessage(message) {
         messages.push(structuredClone(message));
         if (message.type === "voice_settings") return { selected: voices[0], favorites: voices };
@@ -136,8 +137,26 @@ async function fixture({ resume = false, savedReads = [] } = {}) {
     [...shadow.querySelectorAll(".voice-select")].find(button => button.textContent === name).click();
     await tick();
   };
-  return { window, source, reads, messages, ports, contexts, shadow, followed, click, advance, audio, chooseVoice, close: () => dom.window.close() };
+  return { window, source, reads, messages, ports, contexts, shadow, followed, click, advance, audio, chooseVoice, messageListeners, close: () => dom.window.close() };
 }
+
+test("summoned player starts compact without audio and repeat activation keeps one player", async t => {
+  const f = await fixture();
+  t.after(f.close);
+  assert.equal(f.shadow.getElementById("dock").dataset.compact, "true");
+  assert.equal(f.shadow.getElementById("full-player").hidden, true);
+  assert.equal(f.shadow.getElementById("mini-player").hidden, false);
+  assert.equal(f.ports.length, 0);
+  assert.equal(f.contexts.length, 0);
+  let response;
+  for (const listener of f.messageListeners) listener({ type: "show_readflow" }, {}, value => { response = value; });
+  assert.equal(response.ok, true);
+  f.window.eval(script);
+  assert.equal(f.window.document.querySelectorAll("#readflow-controls").length, 1);
+  assert.equal(f.messageListeners.length, 1);
+  await f.click("mini-action-button");
+  assert.equal(f.ports.length, 1, "only the user's play action starts audio");
+});
 
 test("saved progress, highlighting, and auto-scroll share the same source after repeated voice changes", async t => {
   const f = await fixture({ resume: true });
