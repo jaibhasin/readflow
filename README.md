@@ -74,7 +74,34 @@ curl http://127.0.0.1:4179/health
 
 The response should be `{"status":"ok"}`.
 
-### Automatic startup on macOS
+### Open Readflow from Applications on macOS
+
+On macOS 13 or newer, build the native app after `uv sync` and configuring `.env`.
+Use a permanent checkout because the app starts Python from that folder.
+Building requires Apple's Xcode Command Line Tools (`xcode-select --install` if they are missing).
+
+```sh
+python3 scripts/build-mac-app.py --output "$HOME/Applications/Readflow.app"
+```
+
+Open **Readflow** from your Applications folder or Spotlight when you want to listen.
+Wait for **Ready to listen**, then click the Readflow icon in Chrome and press Play.
+Quit Readflow with its Quit button, Command-Q, or the window's close button to stop the bridge.
+Minimizing keeps it available.
+The app does not start at login, and neither the app nor its Python process remains running after quitting.
+While open, the app and bridge use memory; generating speech and playing audio also use CPU, network, and battery.
+Your key stays in the project's `.env`, and app logs are stored at `~/Library/Logs/Readflow/app-bridge.log`.
+
+If you previously installed automatic startup, remove it before opening the app:
+
+```sh
+python3 scripts/bridge-service.py uninstall
+```
+
+Quit the app before rebuilding it after code updates or moving the project.
+The installer preserves an existing app as `Readflow.previous.app`; move that backup before installing another update.
+
+### Optional automatic startup on macOS
 
 To keep the bridge available without a terminal, install a background service once after `uv sync` and configuring `.env`.
 Stop any bridge you already started in a terminal before installing.
@@ -215,7 +242,7 @@ Optional detailed diagnostics include the exact text sent for a listen, so revie
 | Symptom | Check |
 | --- | --- |
 | The player does not appear | Use an HTML article page rather than a PDF, Chrome settings page, or the Chrome Web Store. Reload the extension and refresh the article tab after rebuilding. |
-| Listening cannot connect | Keep the bridge running and check `curl http://127.0.0.1:4179/health`. |
+| Listening cannot connect | Open the Readflow Mac app or start the bridge manually, then check `curl http://127.0.0.1:4179/health`. |
 | Fish Audio rejects the request | Check `FISH_API_KEY` in `.env`, restart the bridge, and check your Fish Audio account access. |
 | Audio pauses to buffer at a higher speed | Try a lower speed so speech generation can keep up. |
 | A saved read needs new audio | Resume with the bridge running; saved reads store text and progress rather than audio. |
@@ -234,7 +261,7 @@ Fish Audio events should arrive as the service generates audio and timestamp dat
 
 ## Run checks
 
-GitHub Actions runs type checking, the production build, all JavaScript unit tests, the browser playback check, and Python bridge tests on every push and pull request.
+GitHub Actions runs type checking, the production build, all JavaScript unit tests, the browser playback check, Python bridge tests, and a native macOS app build on every push and pull request.
 The workflow can also be started manually from GitHub's **Actions** tab.
 CI uses synthetic audio and mocked Fish connections, so it needs no Fish API key.
 
@@ -249,7 +276,7 @@ uv run python -m unittest discover -s tests -p 'test_*.py'
 
 For a browser playback check, build first, then run `node tests/playback-browser.mjs` with Chromium installed (or set `CHROMIUM_PATH` to its executable).
 This uses synthetic audio and a controlled extension port with real Web Audio to check a 45-second frozen-tab pause, word seeking, disconnect recovery, and selected-text listening.
-It requires free local ports 4179, 4180, and 9224; stop the local bridge first.
+The audio fixtures use temporary ports; port 9224 must be free for Chromium's debugger.
 It does not test Chrome's extension service-worker lifecycle or live Fish Audio.
 
 ## Project guide
