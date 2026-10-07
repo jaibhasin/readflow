@@ -1,4 +1,5 @@
 import { handleReadingMessage } from "./reading-list-background";
+import { handlePlaybackSettings } from "./playback-settings";
 import {
   appendTraceEvent,
   consumeDetailedCapture,
@@ -15,7 +16,12 @@ type StreamEvent = {
   [key: string]: unknown;
 };
 
-chrome.runtime.onMessage.addListener((message: { type?: string; query?: string; page?: number; voice?: unknown; favorite?: boolean }, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: { type?: string; query?: string; page?: number; voice?: unknown; favorite?: boolean; rate?: unknown }, _sender, sendResponse) => {
+  const playbackResponse = handlePlaybackSettings(message);
+  if (playbackResponse) {
+    void playbackResponse.then(sendResponse);
+    return true;
+  }
   const readingResponse = handleReadingMessage(message as Record<string, unknown>, _sender);
   if (readingResponse) {
     void readingResponse.then(sendResponse);
