@@ -23,8 +23,8 @@ const bridge = http.createServer(async (req,res) => {
   res.end('data: {"event":"finish"}\n\n');
 });
 const page = http.createServer((req,res)=> { res.setHeader('Content-Type','text/html'); res.end(article); });
-await new Promise(resolve=>bridge.listen(4179,'127.0.0.1',resolve));
-await new Promise(resolve=>page.listen(4180,'127.0.0.1',resolve));
+await new Promise(resolve=>bridge.listen(0,'127.0.0.1',resolve));
+await new Promise(resolve=>page.listen(0,'127.0.0.1',resolve));
 const profile = await mkdtemp(join(tmpdir(), 'readflow-chrome-'));
 const chrome = spawn(process.env.CHROMIUM_PATH || 'chromium',['--headless=new','--no-sandbox','--disable-gpu','--autoplay-policy=no-user-gesture-required','--remote-debugging-port=9224',`--user-data-dir=${profile}`,'about:blank'],{stdio:['ignore','ignore','pipe']});
 let browserLog = '';
@@ -46,7 +46,7 @@ try {
   ws.addEventListener('message',event=> { const data=JSON.parse(event.data); if(data.id) {const item=pending.get(data.id);pending.delete(data.id);data.error?item.reject(new Error(JSON.stringify(data.error))):item.resolve(data.result);} });
   const send=(method,params={},sessionId)=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params,sessionId}));});
   console.log('Validating the built content script with real Web Audio and a controlled extension port.');
-  const {targetId}=await send('Target.createTarget',{url:'http://127.0.0.1:4180'});
+  const {targetId}=await send('Target.createTarget',{url:`http://127.0.0.1:${page.address().port}`});
   const {sessionId}=await send('Target.attachToTarget',{targetId,flatten:true});
   const evaluate=async expression=> {const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true},sessionId); if(r.exceptionDetails)throw new Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
   const status=()=>evaluate(`document.querySelector('#readflow-controls')?.shadowRoot.querySelector('#status')?.textContent`);
@@ -81,7 +81,7 @@ try {
             if (!connected) throw new Error('Port disconnected');
             if (message.type !== 'start') return;
             // Only generate the first section: later article words remain uncached.
-            fetch('http://127.0.0.1:4179/v1/tts/stream/with-timestamp', {
+            fetch('http://127.0.0.1:${bridge.address().port}/v1/tts/stream/with-timestamp', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ text: message.sections[0].text }),
             }).then(r => r.text()).then(text => {
