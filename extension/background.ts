@@ -1,4 +1,5 @@
 import { handleReadingMessage } from "./reading-list-background";
+import "./toolbar";
 import { handlePlaybackSettings } from "./playback-settings";
 import {
   appendTraceEvent,

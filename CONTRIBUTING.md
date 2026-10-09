@@ -25,7 +25,7 @@ git diff --check
 After rebuilding, reload Readflow at `chrome://extensions` and refresh the article tab.
 For player or highlighting changes, check the behavior on an actual article page with the bridge running.
 GitHub Actions runs the automated checks on pushes and pull requests without a Fish Audio key.
-The synthetic browser check is documented in the [README](README.md#run-checks).
+The synthetic browser check is documented in the [README](README.md#development).
 
 ## Reporting bugs
 

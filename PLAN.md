@@ -8,9 +8,9 @@ The page follows the spoken paragraph and gives the current word a subtle highli
 
 ## MVP experience
 
-1. On an article page, a compact player appears near the lower right edge.
+1. Clicking the extension toolbar icon shows a compact player near the lower right edge of the current page.
 2. **Listen to article** extracts the main reading content, starts at its beginning, and skips navigation, ads, comments, and related links.
-3. Selecting readable text shows a small **Listen** action near the selection.
+3. After activating Readflow, selecting readable text shows a small **Listen** action near the selection.
 4. The player shows play/pause, 15-second back and forward controls, progress, and a close button.
 5. Playback scrolls the active paragraph into view when needed and highlights the current word without changing the article's markup or layout.
 6. Closing the player stops playback and removes Readflow highlights.
@@ -18,7 +18,7 @@ The page follows the spoken paragraph and gives the current word a subtle highli
 
 The article action always starts at the top of the main article.
 Selection playback reads only the selected text.
-The floating player stays within the current tab; navigation starts a new session.
+The floating player stays within the current tab; navigation starts a new session and requires another toolbar click.
 
 ## Tech stack
 

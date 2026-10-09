@@ -4,21 +4,12 @@
   "version": "0.1.0",
   "description": "Listen to articles and selected text while reading.",
   "action": {
-    "default_popup": "extension/reading-list.html",
-    "default_title": "Readflow reads"
+    "default_title": "Show Readflow Walkman"
   },
-  "permissions": ["storage"],
+  "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": ["http://127.0.0.1:4179/*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"
-  },
-  "content_scripts": [
-    {
-      "matches": ["http://*/*", "https://*/*"],
-      "css": ["highlight.css"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ]
+  }
 }

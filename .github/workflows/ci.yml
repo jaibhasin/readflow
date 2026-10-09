@@ -47,3 +47,24 @@ jobs:
         run: uv sync --locked
       - name: Python unit tests
         run: uv run --no-sync python -m unittest discover -s tests -p 'test_*.py'
+
+  mac-app:
+    name: Mac application build
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Configure test environment
+        run: cp .env.example .env
+      - name: Build native app and icon
+        run: python3 scripts/build-mac-app.py
+      - name: Verify app signature
+        run: codesign --verify --deep --strict build/macos/Readflow.app
+      - name: Python and app lifecycle tests
+        run: uv run --no-sync python -m unittest discover -s tests -p 'test_*.py'

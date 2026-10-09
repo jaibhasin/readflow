@@ -5,6 +5,8 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { prepareSpokenSource } from '../extension/spoken-text.ts';
+import { splitTextSections } from '../extension/text-sections.ts';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const requests = [];
@@ -23,8 +25,8 @@ const bridge = http.createServer(async (req,res) => {
   res.end('data: {"event":"finish"}\n\n');
 });
 const page = http.createServer((req,res)=> { res.setHeader('Content-Type','text/html'); res.end(article); });
-await new Promise(resolve=>bridge.listen(4179,'127.0.0.1',resolve));
-await new Promise(resolve=>page.listen(4180,'127.0.0.1',resolve));
+await new Promise(resolve=>bridge.listen(0,'127.0.0.1',resolve));
+await new Promise(resolve=>page.listen(0,'127.0.0.1',resolve));
 const profile = await mkdtemp(join(tmpdir(), 'readflow-chrome-'));
 const chrome = spawn(process.env.CHROMIUM_PATH || 'chromium',['--headless=new','--no-sandbox','--disable-gpu','--autoplay-policy=no-user-gesture-required','--remote-debugging-port=9224',`--user-data-dir=${profile}`,'about:blank'],{stdio:['ignore','ignore','pipe']});
 let browserLog = '';
@@ -46,7 +48,7 @@ try {
   ws.addEventListener('message',event=> { const data=JSON.parse(event.data); if(data.id) {const item=pending.get(data.id);pending.delete(data.id);data.error?item.reject(new Error(JSON.stringify(data.error))):item.resolve(data.result);} });
   const send=(method,params={},sessionId)=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params,sessionId}));});
   console.log('Validating the built content script with real Web Audio and a controlled extension port.');
-  const {targetId}=await send('Target.createTarget',{url:'http://127.0.0.1:4180'});
+  const {targetId}=await send('Target.createTarget',{url:`http://127.0.0.1:${page.address().port}`});
   const {sessionId}=await send('Target.attachToTarget',{targetId,flatten:true});
   const evaluate=async expression=> {const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true},sessionId); if(r.exceptionDetails)throw new Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
   const status=()=>evaluate(`document.querySelector('#readflow-controls')?.shadowRoot.querySelector('#status')?.textContent`);
@@ -61,8 +63,10 @@ try {
         if (message.type === 'reading_for_page') return {};
         if (message.type === 'reading_save') {
           const item = { ...message.item, id: 'fixture-read', offset: 0, status: 'in-progress', sessionId: message.sessionId };
+          window.__readingText = item.text;
           return { item };
         }
+        if (message.type === 'reading_progress') window.__readingProgress = message;
         return { ok: true };
       },
       connect: () => {
@@ -81,7 +85,7 @@ try {
             if (!connected) throw new Error('Port disconnected');
             if (message.type !== 'start') return;
             // Only generate the first section: later article words remain uncached.
-            fetch('http://127.0.0.1:4179/v1/tts/stream/with-timestamp', {
+            fetch('http://127.0.0.1:${bridge.address().port}/v1/tts/stream/with-timestamp', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ text: message.sections[0].text }),
             }).then(r => r.text()).then(text => {
@@ -123,16 +127,23 @@ try {
   assert.doesNotMatch(await status(),/Paused|Refresh|lost/);
   assert.equal(await evaluate('window.__contexts.at(-1).state'), 'running');
   console.log('Cached double-click resumed:',await status());
-  await selectWord('p7',5,5); await wait(500);
+  await selectWord('p7',5,5); await wait(1500);
   assert.equal(requests[beforeCached].startsWith('going.'),true,'ungenerated word starts new request exactly there');
   console.log('Ungenerated double-click request:',requests[beforeCached].slice(0,70));
   await click('pause-button'); await wait(100);
   // Simulate an unexpected worker restart through its disconnected port.
-  await evaluate('window.__ports.at(-1).disconnect()'); await wait(1200);
+  const recoveryCheckpoint = await evaluate(`(()=>{
+    window.__ports.at(-1).disconnect();
+    return { text: window.__readingText, offset: window.__readingProgress.offset };
+  })()`);
+  await wait(1200);
   console.log('After simulated worker restart:',await status());
+  console.log('Recovery checkpoint:', recoveryCheckpoint.offset, recoveryCheckpoint.text.slice(recoveryCheckpoint.offset, recoveryCheckpoint.offset + 70));
+  console.log('Recovery request:', requests.at(-1).slice(0,70));
   assert.equal(await evaluate('window.__contexts.at(-1).state'), 'suspended');
   assert.match(await status(),/Paused/,'automatic recovery preserves pause');
-  assert.equal(requests.at(-1).startsWith('going.'),true,'recovery starts at the current source word');
+  const expectedRecovery = splitTextSections(prepareSpokenSource(recoveryCheckpoint.text.slice(recoveryCheckpoint.offset)).text)[0].text;
+  assert.equal(requests.at(-1),expectedRecovery,'recovery resumes exactly at the saved disconnect position');
   await evaluate('window.__ports.at(-1).disconnect()'); await wait(200);
   assert.match(await status(),/Press Listen/,'second disconnect ends bounded recovery');
   assert.doesNotMatch(await status(),/Refresh/);

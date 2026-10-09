@@ -4,7 +4,7 @@ Validated on 2026-10-03 in the Readflow worktree.
 
 - `npm run check` and `npm run build` passed.
 - `node --experimental-strip-types --test tests/*.test.mjs` passed all 27 tests.
-- `/Users/jaibhasin/Desktop/readflow/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` passed both bridge tests.
+- `uv run python -m unittest discover -s tests -p 'test_*.py'` passed both bridge tests.
 
 The DSP tests cover pitch and duration at every available speed, identical output across network chunk boundaries, exact original samples at 1×, short audio, and the final voiced tail.
 A 220 Hz input stayed within 2 Hz at speeds from 0.75× through 3× in the synthetic signal tests.
