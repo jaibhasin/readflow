@@ -31,6 +31,7 @@ export default defineConfig({
         });
         mkdirSync("dist", { recursive: true });
         cpSync("extension/manifest.json", "dist/manifest.json");
+        cpSync("extension/icons", "dist/icons", { recursive: true });
         cpSync("extension/highlight.css", "dist/highlight.css");
         cpSync("LICENSE", "dist/LICENSE");
         cpSync("extension/READABILITY-LICENSE.txt", "dist/READABILITY-LICENSE.txt");
