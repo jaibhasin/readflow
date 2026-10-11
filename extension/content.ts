@@ -49,6 +49,7 @@ if (!document.getElementById("readflow-controls")) {
   const controls = createControls();
   document.documentElement.append(controls.host);
   setCompactMode(controls, true);
+  enablePlayerMovement(controls);
   const voicePicker = createVoicePicker(controls.host.shadowRoot!, controls.dock, (voice) => changePlaybackVoice?.(voice));
   voicePickers.set(controls.host, voicePicker);
 
@@ -347,6 +348,8 @@ function createControls(): {
         width: min(300px, calc(100vw - 32px));
       }
 
+      #dock[data-moving="true"] #brand { cursor: grabbing; }
+
       #dock[data-compact="true"] {
         border-radius: 13px;
         padding: 8px;
@@ -370,6 +373,9 @@ function createControls(): {
         color: #e9eeeb;
         font: 800 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
         letter-spacing: 0.19em;
+        cursor: grab;
+        touch-action: none;
+        user-select: none;
       }
 
       #brand::before {
@@ -834,13 +840,6 @@ function createControls(): {
         50% { box-shadow: 0 0 15px rgb(214 233 134 / 80%); }
       }
 
-      @media (max-width: 540px) {
-        #dock {
-          right: 50%;
-          transform: translateX(50%);
-        }
-      }
-
       @media (prefers-reduced-motion: reduce) {
         button { transition: none; }
         .reel::before,
@@ -856,7 +855,7 @@ function createControls(): {
       <div id="dock" role="group" aria-label="Readflow player" data-transport="idle" data-compact="false">
         <div id="full-player">
         <div id="dock-header">
-          <span id="brand">READFLOW</span>
+          <span id="brand" role="button" tabindex="0" aria-label="Move Readflow player. Use arrow keys to reposition">READFLOW</span>
           <div id="header-actions">
             <div id="speed-control">
               <button id="speed-button" type="button" title="Playback speed: 1 time" aria-label="Playback speed 1 time. Change speed" aria-controls="speed-panel" aria-expanded="false">1×</button>
@@ -988,6 +987,91 @@ function setPlayerStatus(controls: ReturnType<typeof createControls>, message: s
   controls.status.textContent = message;
   controls.miniStatus.textContent = message;
   controls.miniStatus.title = message;
+}
+
+function enablePlayerMovement(controls: ReturnType<typeof createControls>): void {
+  const handle = controls.host.shadowRoot!.querySelector<HTMLElement>("#brand")!;
+  const storageKey = `readflow-player-position:${location.origin}`;
+  let pointerStart: { id: number; x: number; y: number; left: number; top: number } | null = null;
+
+  const clampPosition = (left: number, top: number): { left: number; top: number } => {
+    const rect = controls.dock.getBoundingClientRect();
+    const margin = 8;
+    return {
+      left: Math.max(margin, Math.min(window.innerWidth - rect.width - margin, left)),
+      top: Math.max(margin, Math.min(window.innerHeight - rect.height - margin, top)),
+    };
+  };
+
+  const setPosition = (left: number, top: number, persist = false): void => {
+    const bounded = clampPosition(left, top);
+    controls.dock.style.left = `${bounded.left}px`;
+    controls.dock.style.top = `${bounded.top}px`;
+    controls.dock.style.right = "auto";
+    controls.dock.style.bottom = "auto";
+    controls.dock.style.transform = "none";
+    if (persist) {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(bounded));
+      } catch {
+        // The player remains movable when site storage is unavailable.
+      }
+    }
+  };
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey) || "null") as { left?: unknown; top?: unknown } | null;
+    if (typeof saved?.left === "number" && Number.isFinite(saved.left)
+      && typeof saved.top === "number" && Number.isFinite(saved.top)) {
+      setPosition(saved.left, saved.top);
+    }
+  } catch {
+    // Ignore unavailable or malformed saved coordinates and use the default corner.
+  }
+
+  handle.addEventListener("pointerdown", (event: PointerEvent) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    event.preventDefault();
+    const rect = controls.dock.getBoundingClientRect();
+    pointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+    controls.dock.dataset.moving = "true";
+    handle.setPointerCapture(event.pointerId);
+  });
+  handle.addEventListener("pointermove", (event: PointerEvent) => {
+    if (!pointerStart || event.pointerId !== pointerStart.id) return;
+    setPosition(pointerStart.left + event.clientX - pointerStart.x, pointerStart.top + event.clientY - pointerStart.y);
+  });
+  const finishMove = (event: PointerEvent): void => {
+    if (!pointerStart || event.pointerId !== pointerStart.id) return;
+    const rect = controls.dock.getBoundingClientRect();
+    pointerStart = null;
+    delete controls.dock.dataset.moving;
+    setPosition(rect.left, rect.top, true);
+  };
+  handle.addEventListener("pointerup", finishMove);
+  handle.addEventListener("pointercancel", finishMove);
+  handle.addEventListener("keydown", (event: KeyboardEvent) => {
+    const distance = event.shiftKey ? 40 : 12;
+    const movement = {
+      ArrowLeft: [-distance, 0], ArrowRight: [distance, 0],
+      ArrowUp: [0, -distance], ArrowDown: [0, distance],
+    }[event.key];
+    if (!movement) return;
+    event.preventDefault();
+    const rect = controls.dock.getBoundingClientRect();
+    setPosition(rect.left + movement[0], rect.top + movement[1], true);
+  });
+
+  window.addEventListener("resize", () => {
+    const rect = controls.dock.getBoundingClientRect();
+    setPosition(rect.left, rect.top, true);
+  });
+  new ResizeObserver(() => {
+    if (controls.dock.style.left) {
+      const rect = controls.dock.getBoundingClientRect();
+      setPosition(rect.left, rect.top, true);
+    }
+  }).observe(controls.dock);
 }
 
 function setCompactMode(controls: ReturnType<typeof createControls>, compact: boolean): void {
