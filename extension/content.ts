@@ -1066,12 +1066,14 @@ function enablePlayerMovement(controls: ReturnType<typeof createControls>): void
     const rect = controls.dock.getBoundingClientRect();
     setPosition(rect.left, rect.top, true);
   });
-  new ResizeObserver(() => {
-    if (controls.dock.style.left) {
-      const rect = controls.dock.getBoundingClientRect();
-      setPosition(rect.left, rect.top, true);
-    }
-  }).observe(controls.dock);
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => {
+      if (controls.dock.style.left) {
+        const rect = controls.dock.getBoundingClientRect();
+        setPosition(rect.left, rect.top, true);
+      }
+    }).observe(controls.dock);
+  }
 }
 
 function setCompactMode(controls: ReturnType<typeof createControls>, compact: boolean): void {
